@@ -15,6 +15,8 @@ export const usePushNotifications = () => {
   const prevUserRef = useRef<any>(null);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return; // push not supported on web
+
     const registerPush = async () => {
       try {
         const token = await notificationsService.registerForPushNotificationsAsync();
