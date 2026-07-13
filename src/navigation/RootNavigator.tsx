@@ -1,13 +1,13 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from './types';
 import AuthNavigator from './AuthNavigator';
 import AppNavigator from './AppNavigator';
 import { useAuth } from '../hooks/useAuth';
 import SplashScreen from '../screens/auth/SplashScreen';
 
-const Stack = createStackNavigator<RootStackParamList>();
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export const RootNavigator = () => {
   const { user, isLoading } = useAuth();

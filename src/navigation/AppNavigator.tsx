@@ -1,6 +1,6 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import {
   AppTabParamList,
   InboxStackParamList,
@@ -32,21 +32,18 @@ import TeamScreen from '../screens/team/TeamScreen';
 import SupportScreen from '../screens/support/SupportScreen';
 
 const Tab = createBottomTabNavigator<AppTabParamList>();
-const InboxStack = createStackNavigator<InboxStackParamList>();
-const SettingsStack = createStackNavigator<SettingsStackParamList>();
+const InboxStack = createNativeStackNavigator<InboxStackParamList>();
+const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
+
+const screenOptions = {
+  headerStyle: { backgroundColor: colors.background },
+  headerTintColor: colors.text,
+  headerShadowVisible: false,
+  contentStyle: { backgroundColor: colors.background },
+};
 
 const InboxNavigator = () => (
-  <InboxStack.Navigator
-    screenOptions={{
-      headerStyle: {
-        backgroundColor: colors.background,
-        elevation: 0,
-        shadowOpacity: 0,
-      },
-      headerTintColor: colors.text,
-      cardStyle: { backgroundColor: colors.background },
-    }}
-  >
+  <InboxStack.Navigator screenOptions={screenOptions}>
     <InboxStack.Screen
       name="ConversationList"
       component={ConversationListScreen}
@@ -66,17 +63,7 @@ const InboxNavigator = () => (
 );
 
 const SettingsNavigator = () => (
-  <SettingsStack.Navigator
-    screenOptions={{
-      headerStyle: {
-        backgroundColor: colors.background,
-        elevation: 0,
-        shadowOpacity: 0,
-      },
-      headerTintColor: colors.text,
-      cardStyle: { backgroundColor: colors.background },
-    }}
-  >
+  <SettingsStack.Navigator screenOptions={screenOptions}>
     <SettingsStack.Screen
       name="SettingsHome"
       component={SettingsHomeScreen}
@@ -113,12 +100,9 @@ export const AppNavigator = () => {
           paddingBottom: 8,
           paddingTop: 8,
         },
-        headerStyle: {
-          backgroundColor: colors.background,
-          elevation: 0,
-          shadowOpacity: 0,
-        },
+        headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
+        headerShadowVisible: false,
       }}
     >
       <Tab.Screen
