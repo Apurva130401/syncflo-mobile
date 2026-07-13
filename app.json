@@ -7,11 +7,7 @@
     "icon": "./assets/icon.png",
     "scheme": "syncflo",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#121212"
-    },
+
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.syncflo.mobile"
