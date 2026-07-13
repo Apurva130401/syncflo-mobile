@@ -63,7 +63,12 @@ export const useAuth = () => {
   const loadSession = async () => {
     setLoading(true);
     try {
-      const session = await authService.getCurrentSession();
+      // Add a 3-second safety timeout so a hung storage/network call doesn't brick the app
+      const sessionPromise = authService.getCurrentSession();
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+      
+      const session = await Promise.race([sessionPromise, timeoutPromise]);
+      
       if (session) {
         setUser(session.user);
         setTokens(session.accessToken, session.refreshToken);

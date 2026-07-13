@@ -33,6 +33,12 @@
     },
     "plugins": [
       "expo-notifications"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3a083884-79be-4332-b984-1f355911f615"
+      }
+    },
+    "owner": "syncflo_ai"
   }
 }
