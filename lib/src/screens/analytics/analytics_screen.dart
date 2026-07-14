@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../core/supabase_service.dart';
@@ -24,43 +22,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Subscription? _subscription;
   Map<String, dynamic>? _overview;
   List<Profile> _teamWorkload = [];
-  Timer? _liveTimer;
-
-  // Live simulated metrics for Voice tab (matching dashboard live simulation)
-  Map<String, String> _liveMetrics = {
-    'responseTime': '1.2s',
-    'resolutionRate': '92%',
-    'customerSatisfaction': '4.7/5',
-    'agentUtilization': '78%'
-  };
-
   @override
   void initState() {
     super.initState();
     _loadAllAnalytics();
-    _startLiveMetricsSimulation();
   }
 
   @override
   void dispose() {
-    _liveTimer?.cancel();
     super.dispose();
-  }
-
-  void _startLiveMetricsSimulation() {
-    _liveTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
-      if (mounted) {
-        setState(() {
-          final rand = Random();
-          _liveMetrics = {
-            'responseTime': '${(1.0 + rand.nextDouble() * 0.4).toStringAsFixed(1)}s',
-            'resolutionRate': '${88 + rand.nextInt(9)}%',
-            'customerSatisfaction': '${(4.5 + rand.nextDouble() * 0.4).toStringAsFixed(1)}/5',
-            'agentUtilization': '${70 + rand.nextInt(16)}%',
-          };
-        });
-      }
-    });
   }
 
   Future<void> _loadAllAnalytics() async {
@@ -138,96 +108,58 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Analytics'),
-          leading: Builder(
-            builder: (context) => IconButton(
-              icon: const Icon(LucideIcons.menu),
-              onPressed: () => Scaffold.of(context).openDrawer(),
-            ),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(LucideIcons.refresh_cw),
-              onPressed: _loadAllAnalytics,
-            ),
-          ],
-          bottom: TabBar(
-            tabs: const [
-              Tab(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.message_square, size: 16),
-                    SizedBox(width: 8),
-                    Text('WhatsApp AI'),
-                  ],
-                ),
-              ),
-              Tab(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(LucideIcons.mic, size: 16),
-                    SizedBox(width: 8),
-                    Text('Voice Agent'),
-                  ],
-                ),
-              ),
-            ],
-            labelColor: const Color(0xFFEA580C), // Warm orange selected label
-            unselectedLabelColor: isDark ? Colors.grey[400] : Colors.grey[600],
-            indicatorColor: const Color(0xFFEA580C), // Warm orange indicator
-            indicatorSize: TabBarIndicatorSize.tab,
-            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 13),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Analytics'),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(LucideIcons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
           ),
         ),
-        drawer: const NavigationDrawerWidget(currentRoute: '/analytics'),
-        body: _isLoading
-            ? Center(child: CircularProgressIndicator(color: AppColors.primary))
-            : _error != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(LucideIcons.circle_alert, color: AppColors.error, size: 48),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Failed to load analytics',
-                            style: TextStyle(color: AppColors.text, fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _error!,
-                            style: TextStyle(color: AppColors.textMuted, fontSize: 13),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: _loadAllAnalytics,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFEA580C),
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : TabBarView(
-                    children: [
-                      _buildWhatsAppTab(context, isDark),
-                      _buildVoiceTab(context, isDark),
-                    ],
-                  ),
+        actions: [
+          IconButton(
+            icon: const Icon(LucideIcons.refresh_cw),
+            onPressed: _loadAllAnalytics,
+          ),
+        ],
       ),
+      drawer: const NavigationDrawerWidget(currentRoute: '/analytics'),
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(LucideIcons.circle_alert, color: AppColors.error, size: 48),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Failed to load analytics',
+                          style: TextStyle(color: AppColors.text, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _error!,
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: _loadAllAnalytics,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFEA580C),
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : _buildWhatsAppTab(context, isDark),
     );
   }
 
@@ -721,10 +653,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: agent.activeChats > 0
-                          ? AppColors.primary.withOpacity(0.1)
+                          ? AppColors.primary.withValues(alpha: 0.1)
                           : Colors.transparent,
                       border: agent.activeChats > 0
-                          ? Border.all(color: AppColors.primary.withOpacity(0.3))
+                          ? Border.all(color: AppColors.primary.withValues(alpha: 0.3))
                           : null,
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -748,140 +680,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   // --- VOICE TAB ---
-  Widget _buildVoiceTab(BuildContext context, bool isDark) {
-    // Dashboard static Voice Data: [Jan: 2400, Feb: 1398, Mar: 9800, Apr: 3908, May: 4800, Jun: 3800]
-    final List<double> voiceValues = [2400, 1398, 9800, 3908, 4800, 3800];
-    final List<String> voiceLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
 
-    // Channel Distribution mock data: WhatsApp (45%), Voice (30%), Email (15%), Web Chat (10%)
-    final List<double> channelValues = [45, 30, 15, 10];
-    final List<String> channelLabels = ['WhatsApp', 'Voice', 'Email', 'Web Chat'];
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Console header card
-          _buildConsoleHeaderCard(context, isDark, 'AI Voice Agent'),
-          const SizedBox(height: 20),
-
-          // Main Voice Minutes Area Chart
-          _buildChartPanel(
-            title: 'Voice Minutes',
-            description: 'Minutes used per month',
-            child: CustomLineChart(
-              values: voiceValues,
-              labels: voiceLabels,
-              lineColor: const Color(0xFF0F766E), // Teal
-              fillC: const Color(0x220F766E),
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // PREMIUM GATED VOICE SECTIONS
-          _buildSectionHeader('VOICE INTELLIGENCE'),
-          const SizedBox(height: 10),
-
-          GatedSection(
-            isLocked: !_isAdvancedPlan,
-            planName: 'Growth',
-            child: Column(
-              children: [
-                // Channel Distribution Donut
-                _buildChartPanel(
-                  title: 'Channel Distribution',
-                  description: 'User distribution across channels',
-                  child: CustomDonutChart(
-                    values: channelValues,
-                    labels: channelLabels,
-                    colors: const [
-                      Color(0xFF0F766E), // Teal
-                      Color(0xFFB45309), // Amber
-                      Color(0xFFBE123C), // Rose
-                      Color(0xFF475569), // Slate
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Live Performance Metrics (Progress Bars)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Performance Metrics',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Key performance indicators (Simulated live)',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const SizedBox(height: 20),
-                        _buildProgressBarRow('Response Time', _liveMetrics['responseTime']!, 0.85, const Color(0xFF0F766E)), // Teal
-                        const SizedBox(height: 16),
-                        _buildProgressBarRow('Resolution Rate', _liveMetrics['resolutionRate']!, 0.92, const Color(0xFF475569)), // Slate
-                        const SizedBox(height: 16),
-                        _buildProgressBarRow('Customer Satisfaction', _liveMetrics['customerSatisfaction']!, 0.94, const Color(0xFFB45309)), // Amber
-                        const SizedBox(height: 16),
-                        _buildProgressBarRow('Agent Utilization', _liveMetrics['agentUtilization']!, 0.78, const Color(0xFFBE123C)), // Rose
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // 4 Voice Stats Mini Cards Grid
-                GridView.count(
-                  crossAxisCount: 2,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 1.6,
-                  children: [
-                    _buildKpiCard(
-                      'API Response Time',
-                      '0.8s',
-                      'Average response time',
-                      LucideIcons.gauge,
-                      const Color(0xFF0F766E),
-                    ),
-                    _buildKpiCard(
-                      'System Uptime',
-                      '99.9%',
-                      'Last 30 days uptime',
-                      LucideIcons.activity,
-                      const Color(0xFF475569),
-                    ),
-                    _buildKpiCard(
-                      'Error Rate',
-                      '0.1%',
-                      'System error rate',
-                      LucideIcons.bot,
-                      const Color(0xFFB45309),
-                    ),
-                    _buildKpiCard(
-                      'Cost Efficiency',
-                      '\$0.02',
-                      'Per API voice call',
-                      LucideIcons.phone,
-                      const Color(0xFFBE123C),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-        ],
-      ),
-    );
-  }
 
   // --- SUB-WIDGET BUILDERS ---
 
@@ -906,7 +705,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         border: Border.all(color: const Color(0xFF332F2D)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.15),
+            color: Colors.black.withValues(alpha: 0.15),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -924,9 +723,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: Colors.white.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Colors.white.withOpacity(0.15)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
                   ),
                   child: Row(
                     children: [
@@ -951,8 +750,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: _isAdvancedPlan 
-                        ? const Color(0xFF166534).withOpacity(0.4) 
-                        : const Color(0xFFB45309).withOpacity(0.4),
+                        ? const Color(0xFF166534).withValues(alpha: 0.4) 
+                        : const Color(0xFFB45309).withValues(alpha: 0.4),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
                       color: _isAdvancedPlan 
@@ -990,9 +789,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
+                      color: Colors.white.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.white.withOpacity(0.15)),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
                     ),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
@@ -1047,7 +846,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           children: [
             CircleAvatar(
               radius: 16,
-              backgroundColor: color.withOpacity(0.1),
+              backgroundColor: color.withValues(alpha: 0.1),
               child: Icon(icon, color: color, size: 16),
             ),
             const SizedBox(width: 10),
@@ -1109,30 +908,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildProgressBarRow(String label, String value, double ratio, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-            Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: ratio,
-            minHeight: 8,
-            backgroundColor: Colors.grey[200],
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-          ),
-        ),
-      ],
-    );
-  }
+
 
   Widget _buildMiniStatsBox(String label, String value, bool isDark, {bool isSuccess = false, bool isAccent = false, bool isError = false}) {
     Color bg = isDark ? const Color(0xFF262322) : const Color(0xFFF1F5F9);
@@ -1140,15 +916,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     Color textC = isDark ? Colors.white : Colors.black87;
 
     if (isSuccess) {
-      bg = isDark ? const Color(0xFF14532D).withOpacity(0.2) : const Color(0xFFD1FAE5);
+      bg = isDark ? const Color(0xFF14532D).withValues(alpha: 0.2) : const Color(0xFFD1FAE5);
       border = isDark ? const Color(0xFF14532D) : const Color(0xFFA7F3D0);
       textC = isDark ? const Color(0xFF10B981) : const Color(0xFF047857);
     } else if (isAccent) {
-      bg = isDark ? const Color(0xFF78350F).withOpacity(0.2) : const Color(0xFFFEF3C7);
+      bg = isDark ? const Color(0xFF78350F).withValues(alpha: 0.2) : const Color(0xFFFEF3C7);
       border = isDark ? const Color(0xFF78350F) : const Color(0xFFFDE68A);
       textC = isDark ? const Color(0xFFF59E0B) : const Color(0xFFB45309);
     } else if (isError) {
-      bg = isDark ? const Color(0xFF7F1D1D).withOpacity(0.2) : const Color(0xFFFEE2E2);
+      bg = isDark ? const Color(0xFF7F1D1D).withValues(alpha: 0.2) : const Color(0xFFFEE2E2);
       border = isDark ? const Color(0xFF7F1D1D) : const Color(0xFFFCA5A5);
       textC = isDark ? const Color(0xFFEF4444) : const Color(0xFFB91C1C);
     }
@@ -1197,7 +973,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.grey.withOpacity(0.05),
+        color: Colors.grey.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -1214,7 +990,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: const Color(0xFFEA580C).withOpacity(0.1),
+              color: const Color(0xFFEA580C).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(

@@ -263,7 +263,7 @@ class _LineChartPainter extends CustomPainter {
 
     // Draw horizontal grid lines
     final Paint gridPaint = Paint()
-      ..color = axisColor.withOpacity(0.3)
+      ..color = axisColor.withValues(alpha: 0.3)
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
 

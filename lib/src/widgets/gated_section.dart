@@ -38,7 +38,7 @@ class GatedSection extends StatelessWidget {
         // Semi-transparent overlay to help readability
         Positioned.fill(
           child: Container(
-            color: (isDark ? Colors.black : Colors.white).withOpacity(0.1),
+            color: (isDark ? Colors.black : Colors.white).withValues(alpha: 0.1),
           ),
         ),
 
@@ -56,7 +56,7 @@ class GatedSection extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.4 : 0.08),
+                color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.08),
                 blurRadius: 20,
                 offset: const Offset(0, 10),
               ),
