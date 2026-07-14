@@ -106,6 +106,9 @@ class SupabaseService {
         assignedTo: (c['assigned_to'] ?? c['assignedTo']) as String?,
         humanTakeoverStartedAt: (c['human_takeover_started_at'] ?? c['humanTakeoverStartedAt']) as String?,
         aiEnabled: (c['ai_enabled'] ?? c['aiEnabled'] ?? true) as bool,
+        humanLastActivityAt: (c['human_last_activity_at'] ?? c['humanLastActivityAt']) as String?,
+        humanTakeoverTimeoutMinutes: (c['human_takeover_timeout_minutes'] ?? c['humanTakeoverTimeoutMinutes']) as int?,
+        humanTakeoverBy: (c['human_takeover_by'] ?? c['humanTakeoverBy']) as String?,
       );
     }).toList();
   }

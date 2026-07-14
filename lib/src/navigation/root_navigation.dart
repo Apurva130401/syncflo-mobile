@@ -4,6 +4,7 @@ import '../core/auth_provider.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/splash_screen.dart';
 import '../screens/home_screen.dart';
+import '../widgets/takeover_manager.dart';
 
 class RootNavigation extends StatelessWidget {
   const RootNavigation({super.key});
@@ -17,7 +18,7 @@ class RootNavigation extends StatelessWidget {
         }
 
         if (auth.user != null) {
-          return const HomeScreen();
+          return const TakeoverManager(child: HomeScreen());
         }
 
         return const LoginScreen();

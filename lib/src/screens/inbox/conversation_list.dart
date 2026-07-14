@@ -224,6 +224,9 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
                               assignedTo: change['assigned_to'] as String?,
                               humanTakeoverStartedAt: change['human_takeover_started_at'] as String?,
                               aiEnabled: (change['ai_enabled'] ?? true) as bool,
+                              humanLastActivityAt: change['human_last_activity_at'] as String?,
+                              humanTakeoverTimeoutMinutes: change['human_takeover_timeout_minutes'] as int?,
+                              humanTakeoverBy: change['human_takeover_by'] as String?,
                             );
                             if (idx != -1) {
                               _conversations[idx] = updatedConv;

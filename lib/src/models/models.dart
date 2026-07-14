@@ -52,6 +52,9 @@ class Conversation {
   final String? assignedTo;
   final String? humanTakeoverStartedAt;
   final bool aiEnabled;
+  final String? humanLastActivityAt;
+  final int? humanTakeoverTimeoutMinutes;
+  final String? humanTakeoverBy;
 
   Conversation({
     required this.id,
@@ -63,6 +66,9 @@ class Conversation {
     this.assignedTo,
     this.humanTakeoverStartedAt,
     required this.aiEnabled,
+    this.humanLastActivityAt,
+    this.humanTakeoverTimeoutMinutes,
+    this.humanTakeoverBy,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -76,6 +82,9 @@ class Conversation {
       assignedTo: json['assignedTo'] as String?,
       humanTakeoverStartedAt: json['humanTakeoverStartedAt'] as String?,
       aiEnabled: json['aiEnabled'] as bool? ?? true,
+      humanLastActivityAt: json['humanLastActivityAt'] as String?,
+      humanTakeoverTimeoutMinutes: json['humanTakeoverTimeoutMinutes'] as int?,
+      humanTakeoverBy: json['humanTakeoverBy'] as String?,
     );
   }
 
@@ -90,6 +99,9 @@ class Conversation {
       'assignedTo': assignedTo,
       'humanTakeoverStartedAt': humanTakeoverStartedAt,
       'aiEnabled': aiEnabled,
+      'humanLastActivityAt': humanLastActivityAt,
+      'humanTakeoverTimeoutMinutes': humanTakeoverTimeoutMinutes,
+      'humanTakeoverBy': humanTakeoverBy,
     };
   }
 }

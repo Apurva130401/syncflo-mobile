@@ -207,4 +207,24 @@ class PushNotificationService {
       debugPrint('[FCM] Error removing token: $e');
     }
   }
+
+  /// Show a manual local notification (e.g. for human takeover auto-resume alerts)
+  Future<void> showLocalNotification(int id, String title, String body, {String? payload}) async {
+    await _localNotifications.show(
+      id,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'syncflo_messages',
+          'SyncFlo Messages',
+          channelDescription: 'New message notifications from SyncFlo Dashboard',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@drawable/ic_notification',
+        ),
+      ),
+      payload: payload,
+    );
+  }
 }
