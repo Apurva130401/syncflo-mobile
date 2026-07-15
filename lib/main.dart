@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'src/core/auth_provider.dart';
 import 'src/core/constants.dart';
 import 'src/core/theme.dart';
+import 'src/core/in_app_notification_service.dart';
 import 'src/navigation/root_navigation.dart';
 
 void main() async {
@@ -38,6 +39,7 @@ class SyncfloApp extends StatelessWidget {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
         return MaterialApp(
+          navigatorKey: InAppNotificationService.navigatorKey,
           title: 'Syncflo',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
