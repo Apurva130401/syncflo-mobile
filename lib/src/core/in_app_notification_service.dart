@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
 import '../widgets/in_app_notification_banner.dart';
+import '../widgets/in_app_notification_modal.dart';
 import 'supabase_service.dart';
 
 class InAppNotificationService {
@@ -55,8 +56,34 @@ class InAppNotificationService {
     });
   }
 
-  /// Displays an animated in-app notification banner
+  /// Displays an animated in-app notification banner or a modal dialog
   void showNotification(AppNotification notification) {
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      debugPrint('[InAppNotif] Navigator context is null, cannot display alert');
+      return;
+    }
+
+    final type = notification.type.toLowerCase();
+    if (type == 'mobile_modal') {
+      showDialog(
+        context: context,
+        builder: (dialogContext) {
+          return InAppNotificationModalWidget(
+            notification: notification,
+            onAction: () {
+              Navigator.of(dialogContext).pop();
+              _handleNotificationAction(notification);
+            },
+            onDismiss: () {
+              Navigator.of(dialogContext).pop();
+            },
+          );
+        },
+      );
+      return;
+    }
+
     final overlayState = navigatorKey.currentState?.overlay;
     if (overlayState == null) {
       debugPrint('[InAppNotif] Overlay state is null, cannot display banner');
