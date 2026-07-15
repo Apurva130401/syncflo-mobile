@@ -64,8 +64,8 @@ class InAppNotificationService {
       return;
     }
 
-    final type = notification.type.toLowerCase();
-    if (type == 'mobile_modal') {
+    final actionUrl = notification.actionUrl ?? '';
+    if (actionUrl.startsWith('mobile_modal:')) {
       showDialog(
         context: context,
         builder: (dialogContext) {
@@ -136,9 +136,18 @@ class InAppNotificationService {
     final context = navigatorKey.currentContext;
     if (context == null) return;
 
-    final url = notification.actionUrl!;
+    var url = notification.actionUrl!;
     debugPrint('[InAppNotif] Handling notification action route: $url');
     
+    // Strip mobile routing prefixes if present
+    if (url.startsWith('mobile_modal:')) {
+      url = url.substring('mobile_modal:'.length);
+    } else if (url.startsWith('mobile_banner:')) {
+      url = url.substring('mobile_banner:'.length);
+    } else if (url.startsWith('mobile:')) {
+      url = url.substring('mobile:'.length);
+    }
+
     if (url.startsWith('/')) {
       Navigator.of(context).pushNamed(url);
     }
