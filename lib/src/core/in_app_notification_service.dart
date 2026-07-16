@@ -1,8 +1,19 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/models.dart';
 import '../widgets/in_app_notification_banner.dart';
 import '../widgets/in_app_notification_modal.dart';
+import '../screens/home_screen.dart';
+import '../screens/inbox/conversation_list.dart';
+import '../screens/analytics/analytics_screen.dart';
+import '../screens/agents/agents_screen.dart';
+import '../screens/team/team_screen.dart';
+import '../screens/notifications/notifications_center_screen.dart';
+import '../screens/billing/billing_screen.dart';
+import '../screens/settings/settings_screen.dart';
+import '../screens/support/support_screen.dart';
 import 'supabase_service.dart';
 
 class InAppNotificationService {
@@ -48,12 +59,44 @@ class InAppNotificationService {
         )
         .subscribe();
 
+    // Fetch and check for any missed unread mobile modal notifications
+    _checkMissedNotifications();
+
     // Listen for auth changes to clean up listeners on logout
     client.auth.onAuthStateChange.listen((data) {
       if (data.session == null) {
         dispose();
       }
     });
+  }
+
+  /// Queries the database for the latest unread mobile-modal notification
+  /// and shows it if found.
+  Future<void> _checkMissedNotifications() async {
+    final client = SupabaseService().client;
+    final user = client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final response = await client
+          .from('notifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('read', false)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (response != null) {
+        final notification = AppNotification.fromJson(response);
+        final actionUrl = notification.actionUrl ?? '';
+        if (actionUrl.startsWith('mobile_modal:')) {
+          showNotification(notification);
+        }
+      }
+    } catch (e) {
+      debugPrint('[InAppNotif] Error checking missed notifications: $e');
+    }
   }
 
   /// Displays an animated in-app notification banner or a modal dialog
@@ -77,6 +120,7 @@ class InAppNotificationService {
             },
             onDismiss: () {
               Navigator.of(dialogContext).pop();
+              _handleNotificationDismiss(notification);
             },
           );
         },
@@ -103,6 +147,7 @@ class InAppNotificationService {
           },
           onDismissComplete: () {
             _removeOverlayEntry();
+            _handleNotificationDismiss(notification);
           },
         );
       },
@@ -129,8 +174,16 @@ class InAppNotificationService {
     debugPrint('[InAppNotif] Listener and overlays disposed');
   }
 
-  /// Handles routing or deep linking action when notification banner is tapped
-  void _handleNotificationAction(AppNotification notification) {
+  /// Marks the notification as read in Supabase
+  void _handleNotificationDismiss(AppNotification notification) {
+    SupabaseService().markNotificationRead(notification.id);
+  }
+
+  /// Handles routing or deep linking action when notification banner/modal is tapped
+  void _handleNotificationAction(AppNotification notification) async {
+    // Mark as read in Supabase
+    _handleNotificationDismiss(notification);
+
     if (notification.actionUrl == null || notification.actionUrl!.isEmpty) return;
 
     final context = navigatorKey.currentContext;
@@ -148,8 +201,43 @@ class InAppNotificationService {
       url = url.substring('mobile:'.length);
     }
 
-    if (url.startsWith('/')) {
-      Navigator.of(context).pushNamed(url);
+    // Handle external website URL redirection
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        debugPrint('[InAppNotif] Could not launch external URL: $url');
+      }
+      return;
+    }
+
+    // Handle internal screen routing
+    Widget? destination;
+    if (url == '/notifications') {
+      destination = const NotificationsCenterScreen();
+    } else if (url == '/inbox') {
+      destination = const ConversationListScreen();
+    } else if (url == '/analytics') {
+      destination = const AnalyticsScreen();
+    } else if (url == '/agents') {
+      destination = const AgentsScreen();
+    } else if (url == '/team') {
+      destination = const TeamScreen();
+    } else if (url == '/billing') {
+      destination = const BillingScreen();
+    } else if (url == '/settings') {
+      destination = const SettingsScreen();
+    } else if (url == '/support') {
+      destination = const SupportScreen();
+    } else if (url == '/overview') {
+      destination = const HomeScreen();
+    }
+
+    if (destination != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => destination!),
+      );
     }
   }
 }
