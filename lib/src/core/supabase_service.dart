@@ -569,5 +569,86 @@ class SupabaseService {
 
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
+
+  // CTWA - Get Connected Meta Ad Accounts & Destinations
+  Future<Map<String, dynamic>> getCtwaAssets() async {
+    final session = client.auth.currentSession;
+    final accessToken = session?.accessToken;
+    if (accessToken == null) {
+      throw Exception('Session expired. Please log in again.');
+    }
+
+    final ownerUserId = _cachedOwnerUserId ?? client.auth.currentUser?.id ?? '';
+    final url = Uri.parse('${Constants.apiUrl}/ctwa/assets');
+    final response = await http.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+        'x-syncflo-account-id': ownerUserId,
+      },
+    );
+
+    if (response.statusCode != 200) {
+      final errorData = jsonDecode(response.body);
+      throw Exception(errorData['error'] ?? 'Failed to load Meta ad assets');
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  // CTWA - Get Meta Billing Details
+  Future<Map<String, dynamic>> getCtwaBilling({String? adAccountId}) async {
+    final session = client.auth.currentSession;
+    final accessToken = session?.accessToken;
+    if (accessToken == null) {
+      throw Exception('Session expired. Please log in again.');
+    }
+
+    final ownerUserId = _cachedOwnerUserId ?? client.auth.currentUser?.id ?? '';
+    final query = adAccountId != null ? '?ad_account_id=${Uri.encodeComponent(adAccountId)}' : '';
+    final url = Uri.parse('${Constants.apiUrl}/ctwa/billing$query');
+    final response = await http.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+        'x-syncflo-account-id': ownerUserId,
+      },
+    );
+
+    if (response.statusCode != 200) {
+      final errorData = jsonDecode(response.body);
+      throw Exception(errorData['error'] ?? 'Failed to load Meta billing details');
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  // CTWA - Get Ads Fetched Directly from Meta
+  Future<List<dynamic>> getCtwaFetchedAds(String adAccountId) async {
+    final session = client.auth.currentSession;
+    final accessToken = session?.accessToken;
+    if (accessToken == null) {
+      throw Exception('Session expired. Please log in again.');
+    }
+
+    final ownerUserId = _cachedOwnerUserId ?? client.auth.currentUser?.id ?? '';
+    final url = Uri.parse('${Constants.apiUrl}/ctwa/fetched-ads?adAccountId=${Uri.encodeComponent(adAccountId)}');
+    final response = await http.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+        'x-syncflo-account-id': ownerUserId,
+      },
+    );
+
+    if (response.statusCode != 200) {
+      final errorData = jsonDecode(response.body);
+      throw Exception(errorData['error'] ?? 'Failed to fetch Meta ads');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['ads'] as List<dynamic>?) ?? [];
+  }
 }
+
 
