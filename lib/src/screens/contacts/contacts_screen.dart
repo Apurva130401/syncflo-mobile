@@ -6,6 +6,7 @@ import '../../core/supabase_service.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../widgets/navigation_drawer.dart';
+import '../inbox/chat_thread.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -121,26 +122,45 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  Future<void> _openWhatsApp(String phone) async {
-    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
-    final uri = Uri.parse('https://wa.me/$cleanPhone');
+  Future<void> _openWhatsApp(Contact contact) async {
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not open WhatsApp for $phone'),
-            backgroundColor: AppColors.error,
-          ),
-        );
+      final conversations = await _supabaseService.getConversations();
+      final cleanPhone = contact.phone.replaceAll(RegExp(r'[^0-9]'), '');
+      
+      Conversation? targetConv;
+      for (final c in conversations) {
+        final cClean = c.contactId.replaceAll(RegExp(r'[^0-9]'), '');
+        if ((cleanPhone.isNotEmpty && cClean.contains(cleanPhone)) ||
+            (cClean.isNotEmpty && cleanPhone.contains(cClean)) ||
+            c.contactId == contact.phone ||
+            c.contactName.toLowerCase() == contact.name.toLowerCase()) {
+          targetConv = c;
+          break;
+        }
       }
+
+      targetConv ??= Conversation(
+        id: 'new_${cleanPhone.isEmpty ? contact.id : cleanPhone}',
+        contactId: contact.phone,
+        contactName: contact.name,
+        status: 'active',
+        lastMessage: null,
+        unreadCount: 0,
+        aiEnabled: true,
+      );
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChatThreadScreen(conversation: targetConv!),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error launching WhatsApp: $e'),
+          content: Text('Error opening live inbox: $e'),
           backgroundColor: AppColors.error,
         ),
       );
@@ -902,7 +922,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                                                 icon: Icon(LucideIcons.message_square, size: 14),
                                                 label: const Text('WhatsApp',
                                                     style: TextStyle(fontSize: 12)),
-                                                onPressed: () => _openWhatsApp(contact.phone),
+                                                onPressed: () => _openWhatsApp(contact),
                                               ),
                                               const SizedBox(width: 8),
                                               IconButton(
