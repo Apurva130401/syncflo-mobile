@@ -163,7 +163,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Here is how your sales flow is doing today.',
+                          'Here is how your system are performing',
                           style: TextStyle(
                             color: AppColors.textMuted,
                             fontSize: 14,
@@ -236,7 +236,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                             const SizedBox(width: 12),
                             Expanded(
                               child: _buildMetricCard(
-                                title: 'Typical Reply',
+                                title: 'Reply Rate',
                                 value: '1.5s',
                                 subtitle: 'Median AI latency',
                                 icon: LucideIcons.clock,

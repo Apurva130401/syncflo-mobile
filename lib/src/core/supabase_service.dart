@@ -649,6 +649,83 @@ class SupabaseService {
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     return (body['ads'] as List<dynamic>?) ?? [];
   }
+
+  // Database - Leads / Contacts Management
+  Future<List<models.Contact>> getLeads() async {
+    final user = client.auth.currentUser;
+    if (user == null) return [];
+
+    final response = await client
+        .from('leads')
+        .select('*')
+        .order('created_at', ascending: false);
+
+    final list = response as List<dynamic>;
+    return list.map((item) => models.Contact.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  Stream<List<Map<String, dynamic>>> subscribeLeads() {
+    return client.from('leads').stream(primaryKey: ['id']);
+  }
+
+  Future<models.Contact> createLead({
+    required String name,
+    required String phone,
+    String? email,
+    String? company,
+    String status = 'new',
+    String source = 'manual',
+    double value = 0.0,
+    List<String> tags = const [],
+    String? assignedTo,
+  }) async {
+    final user = client.auth.currentUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    final payload = {
+      'user_id': user.id,
+      'name': name.trim(),
+      'whatsapp_contact_id': phone.trim(),
+      'email': email != null && email.trim().isNotEmpty ? email.trim() : null,
+      'company': company != null && company.trim().isNotEmpty ? company.trim() : null,
+      'status': status,
+      'source': source,
+      'value': value,
+      'tags': tags,
+      'assigned_to': assignedTo,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    final response = await client
+        .from('leads')
+        .insert(payload)
+        .select()
+        .single();
+
+    return models.Contact.fromJson(response);
+  }
+
+  Future<void> updateLead(models.Contact contact) async {
+    final payload = {
+      'name': contact.name.trim(),
+      'whatsapp_contact_id': contact.phone.trim(),
+      'email': contact.email != null && contact.email!.trim().isNotEmpty ? contact.email!.trim() : null,
+      'company': contact.company != null && contact.company!.trim().isNotEmpty ? contact.company!.trim() : null,
+      'status': contact.status,
+      'source': contact.source,
+      'value': contact.value,
+      'tags': contact.tags,
+      'assigned_to': contact.assignedTo,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    await client.from('leads').update(payload).eq('id', contact.id);
+  }
+
+  Future<void> deleteLead(String leadId) async {
+    await client.from('leads').delete().eq('id', leadId);
+  }
 }
 
 

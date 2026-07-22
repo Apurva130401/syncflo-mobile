@@ -7,12 +7,14 @@ import '../screens/home_screen.dart';
 import '../navigation/root_navigation.dart';
 import '../screens/inbox/conversation_list.dart';
 import '../screens/analytics/analytics_screen.dart';
+import '../screens/ctwa/ctwa_screen.dart';
 import '../screens/agents/agents_screen.dart';
 import '../screens/team/team_screen.dart';
 import '../screens/notifications/notifications_center_screen.dart';
 import '../screens/billing/billing_screen.dart';
 import '../screens/settings/settings_screen.dart';
 import '../screens/support/support_screen.dart';
+import '../screens/contacts/contacts_screen.dart';
 
 class NavigationDrawerWidget extends StatelessWidget {
   final String currentRoute;
@@ -112,10 +114,24 @@ class NavigationDrawerWidget extends StatelessWidget {
                 ),
                 _buildMenuItem(
                   context: context,
+                  icon: LucideIcons.book_user,
+                  label: 'Contacts',
+                  route: '/contacts',
+                  destination: const ContactsScreen(),
+                ),
+                _buildMenuItem(
+                  context: context,
                   icon: LucideIcons.activity,
                   label: 'Analytics',
                   route: '/analytics',
                   destination: const AnalyticsScreen(),
+                ),
+                _buildMenuItem(
+                  context: context,
+                  icon: LucideIcons.megaphone,
+                  label: 'Meta CTWA',
+                  route: '/ctwa',
+                  destination: const CtwaScreen(),
                 ),
                 _buildMenuItem(
                   context: context,
