@@ -8,6 +8,7 @@ import '../../models/models.dart';
 import '../billing/billing_screen.dart';
 import 'notification_preferences_screen.dart';
 import 'profile_edit_screen.dart';
+import 'security_screen.dart';
 import '../../navigation/root_navigation.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -197,6 +198,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(builder: (_) => const NotificationPreferencesScreen()),
+                              );
+                            },
+                          ),
+                          const Divider(height: 1),
+                          ListTile(
+                            leading: Icon(LucideIcons.shield_check, color: AppColors.primary, size: 20),
+                            title: Text('Security & Passkeys', style: TextStyle(color: AppColors.text, fontSize: 15)),
+                            trailing: Icon(LucideIcons.chevron_right, color: AppColors.textMuted, size: 16),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const SecurityScreen()),
                               );
                             },
                           ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/models.dart' as models;
 import 'constants.dart';
 
@@ -76,7 +77,7 @@ class SupabaseService {
   }
 
   Future<void> signOut() async {
-    await client.auth.signOut();
+    await client.auth.signOut(scope: SignOutScope.local);
   }
 
   // Database - Conversations
@@ -136,6 +137,7 @@ class SupabaseService {
     return list.map((m) {
       final isFromUser = m['is_from_user'] ?? (m['sender_type'] == 'customer');
       final sentByAi = m['sent_by_ai'] ?? (m['sender_type'] == 'ai');
+      final rawMetadata = m['metadata'];
 
       return models.Message(
         id: m['id'].toString(),
@@ -146,6 +148,8 @@ class SupabaseService {
         sentByAi: sentByAi as bool,
         createdAt: (m['created_at'] ?? m['createdAt'] ?? '') as String,
         status: (m['status'] ?? 'sent') as String,
+        messageType: (m['message_type'] ?? m['messageType']) as String?,
+        metadata: rawMetadata is Map ? Map<String, dynamic>.from(rawMetadata) : null,
       );
     }).toList();
   }
@@ -171,7 +175,12 @@ class SupabaseService {
         .from('whatsapp_conversations')
         .select('contact_id')
         .eq('id', conversationId)
-        .single();
+        .limit(1)
+        .maybeSingle();
+
+    if (convResponse == null) {
+      throw Exception('Conversation not found');
+    }
 
     final phone = convResponse['contact_id'] as String;
 
@@ -362,6 +371,7 @@ class SupabaseService {
         .from('profiles')
         .select('*')
         .eq('id', user.id)
+        .limit(1)
         .maybeSingle();
 
     if (response == null) return null;
@@ -393,6 +403,7 @@ class SupabaseService {
           .select('owner_user_id')
           .eq('member_user_id', user.id)
           .eq('status', 'active')
+          .limit(1)
           .maybeSingle();
 
       if (membership != null && membership['owner_user_id'] != null) {
@@ -402,6 +413,7 @@ class SupabaseService {
             .from('profiles')
             .select('company_name')
             .eq('id', ownerId)
+            .limit(1)
             .maybeSingle();
 
         if (ownerResponse != null && ownerResponse['company_name'] != null) {
@@ -446,10 +458,12 @@ class SupabaseService {
     final user = client.auth.currentUser;
     if (user == null) return null;
 
+    final ownerUserId = _cachedOwnerUserId ?? user.id;
+
     final response = await client
         .from('subscriptions')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', ownerUserId)
         .inFilter('subscription_status', ['active', 'trial', 'cancelled'])
         .order('updated_at', ascending: false)
         .limit(1)
@@ -464,14 +478,35 @@ class SupabaseService {
     final user = client.auth.currentUser;
     if (user == null) return null;
 
+    final ownerUserId = _cachedOwnerUserId ?? user.id;
+
     final response = await client
         .from('user_usage')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', ownerUserId)
+        .order('period_start', ascending: false)
+        .limit(1)
         .maybeSingle();
 
     if (response == null) return null;
     return models.UserUsage.fromJson(response);
+  }
+
+  // Passkeys Management
+  Future<List<Map<String, dynamic>>> listPasskeys() async {
+    try {
+      final res = await (client.auth as dynamic).passkey.list();
+      if (res != null && res is List) {
+        return List<Map<String, dynamic>>.from(res);
+      }
+    } catch (e) {
+      debugPrint('[SupabaseService] Error listing passkeys: $e');
+    }
+    return [];
+  }
+
+  Future<void> deletePasskey(String passkeyId) async {
+    await (client.auth as dynamic).passkey.delete(passkeyId: passkeyId);
   }
 
   // Notification Center Log
@@ -725,6 +760,19 @@ class SupabaseService {
 
   Future<void> deleteLead(String leadId) async {
     await client.from('leads').delete().eq('id', leadId);
+  }
+
+  Future<void> signInWithPasskey() async {
+    final passkeyUrl = Uri.parse('https://dashboard.syncflo.xyz/login?passkey=true&redirect_to=syncflo://auth-callback');
+    if (await canLaunchUrl(passkeyUrl)) {
+      await launchUrl(
+        passkeyUrl,
+        mode: LaunchMode.inAppBrowserView,
+        browserConfiguration: const BrowserConfiguration(showTitle: true),
+      );
+    } else {
+      throw Exception('Could not launch Passkey sign-in prompt.');
+    }
   }
 }
 

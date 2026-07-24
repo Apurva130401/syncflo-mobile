@@ -39,7 +39,11 @@ class AuthProvider extends ChangeNotifier {
       if (session != null) {
         try {
           final aal = _supabaseService.client.auth.mfa.getAuthenticatorAssuranceLevel();
-          if (aal.nextLevel == supabase.AuthenticatorAssuranceLevels.aal2 &&
+          if (aal.currentLevel == supabase.AuthenticatorAssuranceLevels.aal2) {
+            // Already verified AAL2
+            _mfaRequired = false;
+            _mfaFactorId = null;
+          } else if (aal.nextLevel == supabase.AuthenticatorAssuranceLevels.aal2 &&
               aal.currentLevel != supabase.AuthenticatorAssuranceLevels.aal2) {
             final factors = await _supabaseService.client.auth.mfa.listFactors();
             if (factors.totp.isNotEmpty) {
@@ -99,7 +103,12 @@ class AuthProvider extends ChangeNotifier {
       final session = _supabaseService.client.auth.currentSession;
       if (session != null) {
         final aal = _supabaseService.client.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (aal.nextLevel == supabase.AuthenticatorAssuranceLevels.aal2 &&
+        if (aal.currentLevel == supabase.AuthenticatorAssuranceLevels.aal2) {
+          _mfaRequired = false;
+          _mfaFactorId = null;
+          _user = _supabaseService.currentUser;
+          await _loadProfile();
+        } else if (aal.nextLevel == supabase.AuthenticatorAssuranceLevels.aal2 &&
             aal.currentLevel != supabase.AuthenticatorAssuranceLevels.aal2) {
           final factors = await _supabaseService.client.auth.mfa.listFactors();
           if (factors.totp.isNotEmpty) {
@@ -193,10 +202,32 @@ class AuthProvider extends ChangeNotifier {
         challengeId: challenge.id,
         code: code,
       );
+      // Immediately refresh session so local SDK AAL level updates to aal2 synchronously
+      try {
+        await _supabaseService.client.auth.refreshSession();
+      } catch (refErr) {
+        debugPrint('[AuthProvider] Session refresh after MFA verify error: $refErr');
+      }
       _mfaRequired = false;
       _mfaFactorId = null;
       _user = _supabaseService.currentUser;
       await _loadProfile();
+    } catch (e) {
+      _error = e.toString().replaceAll('Exception: ', '').replaceAll('AuthException: ', '');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loginWithPasskey() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _supabaseService.signInWithPasskey();
     } catch (e) {
       _error = e.toString().replaceAll('Exception: ', '').replaceAll('AuthException: ', '');
       rethrow;

@@ -456,6 +456,53 @@ class _LoginScreenState extends State<LoginScreen> {
                                         ),
                                 ),
                               ),
+                              const SizedBox(height: 16),
+
+                              // Passkey Sign In Button
+                              SizedBox(
+                                height: 52,
+                                child: OutlinedButton(
+                                  onPressed: auth.isLoading
+                                      ? null
+                                      : () async {
+                                          try {
+                                            await auth.loginWithPasskey();
+                                          } catch (e) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                SnackBar(
+                                                  content: Text('Passkey sign-in: ${e.toString().replaceAll("Exception: ", "")}'),
+                                                  backgroundColor: AppColors.error,
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: const BorderSide(color: Colors.white24),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(26),
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(LucideIcons.key_round, size: 18, color: Colors.white70),
+                                      const SizedBox(width: 10),
+                                      const Text(
+                                        'Sign in with Passkey',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                               const SizedBox(height: 36),
 
                               // Create Account footer

@@ -117,6 +117,8 @@ class Message {
   final bool sentByAi;
   final String createdAt;
   final String status; // 'sent' | 'delivered' | 'read' | 'failed'
+  final String? messageType; // 'text' | 'audio' | 'image' | 'document' | etc.
+  final Map<String, dynamic>? metadata;
 
   Message({
     required this.id,
@@ -127,6 +129,8 @@ class Message {
     required this.sentByAi,
     required this.createdAt,
     required this.status,
+    this.messageType,
+    this.metadata,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) {
@@ -139,6 +143,8 @@ class Message {
       sentByAi: json['sentByAi'] as bool? ?? false,
       createdAt: json['createdAt'] as String,
       status: json['status'] as String? ?? 'sent',
+      messageType: json['messageType'] as String?,
+      metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
 
@@ -152,6 +158,8 @@ class Message {
       'sentByAi': sentByAi,
       'createdAt': createdAt,
       'status': status,
+      'messageType': messageType,
+      'metadata': metadata,
     };
   }
 }

@@ -301,6 +301,10 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                             sentByAi: sentByAi as bool,
                             createdAt: (change['created_at'] ?? '') as String,
                             status: (change['status'] ?? 'sent') as String,
+                            messageType: (change['message_type'] ?? change['messageType']) as String?,
+                            metadata: change['metadata'] is Map
+                                ? Map<String, dynamic>.from(change['metadata'] as Map)
+                                : null,
                           );
 
                           if (idx != -1) {
@@ -339,58 +343,62 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                             alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
                             child: Container(
                               margin: const EdgeInsets.only(bottom: 12),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                               constraints: BoxConstraints(
                                 maxWidth: MediaQuery.of(context).size.width * 0.75,
                               ),
-                              decoration: BoxDecoration(
-                                color: isMe
-                                    ? AppColors.primary.withValues(alpha: 0.9)
-                                    : AppColors.surfaceLight,
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(12),
-                                  topRight: const Radius.circular(12),
-                                  bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
-                                  bottomRight: isMe ? Radius.zero : const Radius.circular(12),
-                                ),
-                                border: Border.all(
-                                  color: isMe ? Colors.transparent : AppColors.border,
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (!isMe && m.sentByAi)
-                                    Padding(
-                                      padding: EdgeInsets.only(bottom: 4.0),
-                                      child: Text(
-                                        'Syncflo AI Bot',
-                                        style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                  Text(
-                                    m.content,
-                                    style: TextStyle(
-                                      color: isMe ? AppColors.textInverse : AppColors.text,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        formattedTime,
-                                        style: TextStyle(
-                                          color: isMe ? AppColors.textInverse.withValues(alpha: 0.5) : AppColors.textMuted,
-                                          fontSize: 10,
+                              child: m.messageType == 'audio'
+                                  ? _buildVoiceNoteBubble(m, isMe)
+                                  : Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        color: isMe
+                                            ? AppColors.primary.withValues(alpha: 0.9)
+                                            : AppColors.surfaceLight,
+                                        borderRadius: BorderRadius.only(
+                                          topLeft: const Radius.circular(12),
+                                          topRight: const Radius.circular(12),
+                                          bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
+                                          bottomRight: isMe ? Radius.zero : const Radius.circular(12),
+                                        ),
+                                        border: Border.all(
+                                          color: isMe ? Colors.transparent : AppColors.border,
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ],
-                              ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          if (!isMe && m.sentByAi)
+                                            Padding(
+                                              padding: EdgeInsets.only(bottom: 4.0),
+                                              child: Text(
+                                                'Syncflo AI Bot',
+                                                style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold),
+                                              ),
+                                            ),
+                                          Text(
+                                            m.content,
+                                            style: TextStyle(
+                                              color: isMe ? AppColors.textInverse : AppColors.text,
+                                              fontSize: 15,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            mainAxisAlignment: MainAxisAlignment.end,
+                                            children: [
+                                              Text(
+                                                formattedTime,
+                                                style: TextStyle(
+                                                  color: isMe ? AppColors.textInverse.withValues(alpha: 0.5) : AppColors.textMuted,
+                                                  fontSize: 10,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                             ),
                           );
                         },
@@ -533,4 +541,75 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       ),
     );
   }
+
+  Widget _buildVoiceNoteBubble(models.Message m, bool isMe) {
+    final audioMeta = m.metadata?['audio'] as Map<String, dynamic>?;
+    final isGenerated = audioMeta?['generated'] == true;
+    final transcript = (audioMeta?['transcript'] as String?)?.isNotEmpty == true
+        ? audioMeta!['transcript'] as String
+        : m.content.isNotEmpty ? m.content : null;
+    final label = isGenerated ? 'Voice note sent' : 'Voice note received';
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      constraints: BoxConstraints(
+        minWidth: 200,
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceLight,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(12),
+          topRight: const Radius.circular(12),
+          bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
+          bottomRight: isMe ? Radius.zero : const Radius.circular(12),
+        ),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Center(
+                  child: Text('🎤', style: TextStyle(fontSize: 13)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: AppColors.success,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          transcript != null
+              ? Text(
+                  transcript,
+                  style: TextStyle(color: AppColors.text, fontSize: 14),
+                )
+              : Text(
+                  'Transcript unavailable',
+                  style: TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 13,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+        ],
+      ),
+    );
+  }
 }
+
