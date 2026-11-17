@@ -6,6 +6,18 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/models.dart' as models;
 import 'constants.dart';
 
+/// Error from the dashboard's AI Calling API. 403 means the feature isn't enabled for this account.
+class CallingApiException implements Exception {
+  final String message;
+  final int statusCode;
+  CallingApiException(this.message, this.statusCode);
+
+  bool get notAvailable => statusCode == 403;
+
+  @override
+  String toString() => message;
+}
+
 class SupabaseService {
   static final SupabaseService _instance = SupabaseService._internal();
   factory SupabaseService() => _instance;
@@ -81,37 +93,22 @@ class SupabaseService {
   }
 
   // Database - Conversations
-  Future<List<models.Conversation>> getConversations({String? status}) async {
-    var query = client.from('whatsapp_conversations').select('*');
-    if (status != null) {
-      if (status == 'closed') {
-        query = query.eq('status', 'closed');
-      } else if (status == 'ai') {
-        query = query.eq('status', 'active').eq('ai_enabled', true);
-      } else if (status == 'human') {
-        query = query.eq('status', 'active').eq('ai_enabled', false);
-      }
-    }
-    
-    final response = await query;
+  Future<List<models.Conversation>> getConversations() async {
+    final response = await client
+        .from('whatsapp_conversations')
+        .select('*')
+        .order('last_message_at', ascending: false, nullsFirst: false);
     final list = response as List<dynamic>;
-    
-    return list.map((c) {
-      return models.Conversation(
-        id: c['id'] as String,
-        contactId: (c['contact_id'] ?? c['contactId'] ?? '') as String,
-        contactName: (c['contact_name'] ?? c['contactName'] ?? '') as String,
-        status: (c['status'] ?? 'active') as String,
-        lastMessage: (c['last_message_preview'] ?? c['last_message'] ?? '') as String?,
-        unreadCount: (c['unread_count'] ?? c['unreadCount'] ?? 0) as int,
-        assignedTo: (c['assigned_to'] ?? c['assignedTo']) as String?,
-        humanTakeoverStartedAt: (c['human_takeover_started_at'] ?? c['humanTakeoverStartedAt']) as String?,
-        aiEnabled: (c['ai_enabled'] ?? c['aiEnabled'] ?? true) as bool,
-        humanLastActivityAt: (c['human_last_activity_at'] ?? c['humanLastActivityAt']) as String?,
-        humanTakeoverTimeoutMinutes: (c['human_takeover_timeout_minutes'] ?? c['humanTakeoverTimeoutMinutes']) as int?,
-        humanTakeoverBy: (c['human_takeover_by'] ?? c['humanTakeoverBy']) as String?,
-      );
-    }).toList();
+    return list.map((c) => models.Conversation.fromRow(c as Map<String, dynamic>)).toList();
+  }
+
+  Future<models.Conversation?> getConversation(String conversationId) async {
+    final row = await client
+        .from('whatsapp_conversations')
+        .select('*')
+        .eq('id', conversationId)
+        .maybeSingle();
+    return row == null ? null : models.Conversation.fromRow(row);
   }
 
   // Realtime subscription for conversations
@@ -133,25 +130,15 @@ class SupabaseService {
 
     final response = await query;
     final list = response as List<dynamic>;
-    
-    return list.map((m) {
-      final isFromUser = m['is_from_user'] ?? (m['sender_type'] == 'customer');
-      final sentByAi = m['sent_by_ai'] ?? (m['sender_type'] == 'ai');
-      final rawMetadata = m['metadata'];
+    return list.map((m) => models.Message.fromRow(m as Map<String, dynamic>)).toList();
+  }
 
-      return models.Message(
-        id: m['id'].toString(),
-        conversationId: (m['conversation_id'] ?? m['conversationId'] ?? '') as String,
-        content: (m['content'] ?? m['text'] ?? '') as String,
-        senderId: (m['sender_id'] ?? m['senderId']) as String?,
-        isFromUser: isFromUser as bool,
-        sentByAi: sentByAi as bool,
-        createdAt: (m['created_at'] ?? m['createdAt'] ?? '') as String,
-        status: (m['status'] ?? 'sent') as String,
-        messageType: (m['message_type'] ?? m['messageType']) as String?,
-        metadata: rawMetadata is Map ? Map<String, dynamic>.from(rawMetadata) : null,
-      );
-    }).toList();
+  // Realtime subscription for a single conversation row (status, takeover, assignment)
+  Stream<List<Map<String, dynamic>>> subscribeConversation(String conversationId) {
+    return client
+        .from('whatsapp_conversations')
+        .stream(primaryKey: ['id'])
+        .eq('id', conversationId);
   }
 
   // Realtime subscription for messages in a conversation
@@ -207,36 +194,26 @@ class SupabaseService {
     }
 
     final responseData = jsonDecode(response.body);
-    final waMessageId = responseData['waMessageId'] as String;
+    final waMessageId = responseData['waMessageId']?.toString();
 
-    // 3. Retrieve the created message from database for consistency
-    try {
-      final dbMessage = await client
-          .from('whatsapp_messages')
-          .select('*')
-          .eq('whatsapp_message_id', waMessageId)
-          .maybeSingle();
-
-      if (dbMessage != null) {
-        final isFromUser = dbMessage['is_from_user'] ?? (dbMessage['sender_type'] == 'customer');
-        final sentByAi = dbMessage['sent_by_ai'] ?? (dbMessage['sender_type'] == 'ai');
-        return models.Message(
-          id: dbMessage['id'].toString(),
-          conversationId: dbMessage['conversation_id'] as String,
-          content: dbMessage['content'] as String,
-          senderId: dbMessage['sender_id'] as String?,
-          isFromUser: isFromUser as bool,
-          sentByAi: sentByAi as bool,
-          createdAt: dbMessage['created_at'] as String,
-          status: dbMessage['status'] as String,
-        );
+    // 3. Retrieve the created message from the database so ids match the realtime stream.
+    if (waMessageId != null) {
+      try {
+        final dbMessage = await client
+            .from('whatsapp_messages')
+            .select('*')
+            .eq('whatsapp_message_id', waMessageId)
+            .maybeSingle();
+        if (dbMessage != null) return models.Message.fromRow(dbMessage);
+      } catch (_) {
+        // Fall through to the local placeholder below.
       }
-    } catch (_) {
-      // Fallback if query failed
     }
 
+    // Placeholder carries the WhatsApp id so the realtime row (same whatsapp_message_id)
+    // replaces it instead of appearing as a second copy.
     return models.Message(
-      id: waMessageId,
+      id: waMessageId ?? 'local-${DateTime.now().microsecondsSinceEpoch}',
       conversationId: conversationId,
       content: messageContent,
       senderId: client.auth.currentUser?.id,
@@ -244,6 +221,7 @@ class SupabaseService {
       sentByAi: false,
       createdAt: DateTime.now().toUtc().toIso8601String(),
       status: 'sent',
+      waMessageId: waMessageId,
     );
   }
 
@@ -317,13 +295,88 @@ class SupabaseService {
   }
 
   // Assign conversation to an agent
-  Future<void> assignConversation(String conversationId, String userId) async {
+  /// Pass a profile/user id, or null to unassign. `assigned_to` holds a user id
+  /// (the dashboard sends push notifications to it), never a display name.
+  Future<void> assignConversation(String conversationId, String? userId) async {
     await client
         .from('whatsapp_conversations')
         .update({
           'assigned_to': userId,
         })
         .eq('id', conversationId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // WhatsApp AI Calling (dashboard API; same auth + account headers as the web app)
+  // ---------------------------------------------------------------------------
+
+  Map<String, String> _apiHeaders({bool json = false}) {
+    final token = client.auth.currentSession?.accessToken;
+    if (token == null) throw Exception('Session expired. Please log in again.');
+    return {
+      if (json) 'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+      'x-syncflo-account-id': _cachedOwnerUserId ?? client.auth.currentUser?.id ?? '',
+    };
+  }
+
+  Never _throwApi(http.Response response, String fallback) {
+    String message = fallback;
+    try {
+      final body = jsonDecode(response.body);
+      if (body is Map && body['error'] != null) message = body['error'].toString();
+    } catch (_) {}
+    throw CallingApiException(message, response.statusCode);
+  }
+
+  /// Recent AI calls plus monthly totals.
+  Future<({List<models.CallRecord> calls, models.CallTotals thisMonth})> getAiCalls({int limit = 50}) async {
+    final response = await http.get(
+      Uri.parse('${Constants.apiUrl}/whatsapp/calling/calls?limit=$limit'),
+      headers: _apiHeaders(),
+    );
+    if (response.statusCode != 200) _throwApi(response, 'Failed to load AI calls');
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final calls = ((body['calls'] as List<dynamic>?) ?? [])
+        .map((c) => models.CallRecord.fromJson(c as Map<String, dynamic>))
+        .toList();
+    final totals = (body['totals'] as Map<String, dynamic>?)?['thisMonth'] as Map<String, dynamic>?;
+    return (calls: calls, thisMonth: models.CallTotals.fromJson(totals));
+  }
+
+  /// WhatsApp numbers with their AI Calling state.
+  Future<List<models.CallingNumber>> getCallingNumbers() async {
+    final response = await http.get(
+      Uri.parse('${Constants.apiUrl}/whatsapp/calling/status'),
+      headers: _apiHeaders(),
+    );
+    if (response.statusCode != 200) _throwApi(response, 'Failed to load calling status');
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['numbers'] as List<dynamic>?) ?? [])
+        .map((n) => models.CallingNumber.fromJson(n as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Ask the AI to call a customer. Returns the server's human-readable message
+  /// (e.g. the customer still has to allow calls). Throws [CallingApiException] on failure.
+  Future<String> startAiCall({required String integrationId, required String toPhone}) async {
+    final response = await http.post(
+      Uri.parse('${Constants.apiUrl}/whatsapp/calling/outbound'),
+      headers: _apiHeaders(json: true),
+      body: jsonEncode({'integrationId': integrationId, 'to': toPhone}),
+    );
+    Map<String, dynamic> body = {};
+    try {
+      body = jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (_) {}
+    // 409 = permission required: the server's message explains what to do, so surface it.
+    if (response.statusCode != 200) {
+      throw CallingApiException(
+        (body['message'] ?? body['error'] ?? 'Could not start the call').toString(),
+        response.statusCode,
+      );
+    }
+    return (body['message'] ?? 'Calling now…').toString();
   }
 
   // AI Agents (View-only)
@@ -511,12 +564,22 @@ class SupabaseService {
 
   // Notification Center Log
   Future<List<models.AppNotification>> getNotifications() async {
+    final userId = client.auth.currentUser?.id;
+    if (userId == null) return [];
     final response = await client
         .from('notifications')
         .select('*')
-        .order('created_at', ascending: false);
+        .eq('user_id', userId)
+        .order('created_at', ascending: false)
+        .limit(100);
     final list = response as List<dynamic>;
     return list.map((n) => models.AppNotification.fromJson(n)).toList();
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    final userId = client.auth.currentUser?.id;
+    if (userId == null) return;
+    await client.from('notifications').update({'read': true}).eq('user_id', userId).eq('read', false);
   }
 
   Future<void> markNotificationRead(String id) async {
@@ -773,6 +836,25 @@ class SupabaseService {
     } else {
       throw Exception('Could not launch Passkey sign-in prompt.');
     }
+  }
+
+  Future<bool> handleDeepLinkSession(Uri uri) async {
+    try {
+      debugPrint('[SupabaseService] Deep link received: $uri');
+      Map<String, String> params = uri.queryParameters;
+      if (params.isEmpty && uri.fragment.isNotEmpty) {
+        params = Uri.splitQueryString(uri.fragment);
+      }
+
+      final refreshToken = params['refresh_token'];
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        await client.auth.setSession(refreshToken);
+        return true;
+      }
+    } catch (e) {
+      debugPrint('[SupabaseService] Error processing deep link session: $e');
+    }
+    return false;
   }
 }
 

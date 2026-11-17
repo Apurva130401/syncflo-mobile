@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:intl/intl.dart';
+import '../../core/active_chat.dart';
 import '../../core/supabase_service.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart' as models;
@@ -19,10 +21,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
-  List<models.Message> _messages = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _messagesSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _conversationSub;
+
+  final List<models.Message> _messages = [];
   bool _isLoading = true;
   bool _isSending = false;
+  bool _readMarkPending = false;
   late models.Conversation _activeConversation;
+  List<models.Profile> _team = [];
 
   final List<String> _quickReplies = [
     'Hello! How can I help you?',
@@ -36,30 +43,97 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   void initState() {
     super.initState();
     _activeConversation = widget.conversation;
+    // Tell the notification layer which chat is open so it doesn't alert for it.
+    ActiveChat.conversationId = _activeConversation.id;
+
+    // One subscription for the lifetime of the screen. (Creating the stream inside build()
+    // re-subscribed on every rebuild, which is what let sent messages show up twice.)
+    _messagesSub = _supabase.subscribeMessages(_activeConversation.id).listen(_onMessageRows);
+    _conversationSub = _supabase.subscribeConversation(_activeConversation.id).listen((rows) {
+      if (!mounted || rows.isEmpty) return;
+      setState(() => _activeConversation = models.Conversation.fromRow(rows.first));
+    });
+
     _loadMessages();
-    // Mark conversation as read when opening
+    _loadTeam();
     _supabase.markConversationRead(_activeConversation.id);
   }
 
   @override
   void dispose() {
+    if (ActiveChat.conversationId == _activeConversation.id) {
+      ActiveChat.conversationId = null;
+    }
+    _messagesSub?.cancel();
+    _conversationSub?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadMessages() async {
-    setState(() => _isLoading = true);
     try {
       final list = await _supabase.getConversationMessages(_activeConversation.id);
+      if (!mounted) return;
       setState(() {
-        _messages = list;
+        for (final m in list) {
+          _mergeMessage(m);
+        }
         _isLoading = false;
       });
       _scrollToBottom();
     } catch (_) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _loadTeam() async {
+    try {
+      final team = await _supabase.getTeamMembers();
+      if (mounted) setState(() => _team = team);
+    } catch (_) {}
+  }
+
+  /// Insert or replace a message. A message is "the same" if the row id matches OR it carries the
+  /// same WhatsApp message id (the optimistic copy returned by the send call vs the realtime row).
+  void _mergeMessage(models.Message incoming) {
+    final idx = _messages.indexWhere((m) =>
+        m.id == incoming.id ||
+        (incoming.waMessageId != null && m.waMessageId == incoming.waMessageId) ||
+        (m.waMessageId != null && m.waMessageId == incoming.id));
+    if (idx != -1) {
+      _messages[idx] = incoming;
+    } else {
+      _messages.add(incoming);
+    }
+    _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  void _onMessageRows(List<Map<String, dynamic>> rows) {
+    if (!mounted) return;
+    var hasNewCustomerMessage = false;
+    final knownBefore = _messages.length;
+    setState(() {
+      for (final row in rows) {
+        final msg = models.Message.fromRow(row);
+        final isNew = !_messages.any((m) => m.id == msg.id);
+        _mergeMessage(msg);
+        if (isNew && msg.isFromUser) hasNewCustomerMessage = true;
+      }
+      _isLoading = false;
+    });
+    if (_messages.length != knownBefore) _scrollToBottom();
+    // Keep the unread badge honest while the chat is open.
+    if (hasNewCustomerMessage) _markReadSoon();
+  }
+
+  void _markReadSoon() {
+    if (_readMarkPending) return;
+    _readMarkPending = true;
+    Future.delayed(const Duration(seconds: 1), () {
+      _readMarkPending = false;
+      if (mounted) _supabase.markConversationRead(_activeConversation.id);
+    });
   }
 
   void _scrollToBottom() {
@@ -75,31 +149,30 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   }
 
   Future<void> _handleSend(String text) async {
-    if (text.trim().isEmpty) return;
+    final trimmed = text.trim();
+    // _isSending also guards quick-reply chips and double taps against sending twice.
+    if (trimmed.isEmpty || _isSending) return;
     setState(() => _isSending = true);
     _messageController.clear();
 
     try {
-      final newMsg = await _supabase.sendMessage(_activeConversation.id, text.trim());
+      final newMsg = await _supabase.sendMessage(_activeConversation.id, trimmed);
       if (!mounted) return;
       setState(() {
-        _messages.add(newMsg);
-        // Update human activity timestamp locally
-        _activeConversation = models.Conversation(
-          id: _activeConversation.id,
-          contactId: _activeConversation.contactId,
-          contactName: _activeConversation.contactName,
+        _mergeMessage(newMsg);
+        _activeConversation = _activeConversation.copyWith(
           status: 'escalated',
-          lastMessage: text.trim(),
+          lastMessage: trimmed,
           unreadCount: 0,
-          assignedTo: _activeConversation.assignedTo,
-          humanTakeoverStartedAt: _activeConversation.humanTakeoverStartedAt ?? DateTime.now().toUtc().toIso8601String(),
-          aiEnabled: _activeConversation.aiEnabled,
+          humanTakeoverStartedAt:
+              _activeConversation.humanTakeoverStartedAt ?? DateTime.now().toUtc().toIso8601String(),
         );
       });
       _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
+      // Restore the text so the agent can retry.
+      _messageController.text = trimmed;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to send message: $e'),
@@ -116,16 +189,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       await _supabase.takeoverConversation(_activeConversation.id);
       if (!mounted) return;
       setState(() {
-        _activeConversation = models.Conversation(
-          id: _activeConversation.id,
-          contactId: _activeConversation.contactId,
-          contactName: _activeConversation.contactName,
+        _activeConversation = _activeConversation.copyWith(
           status: 'escalated',
-          lastMessage: _activeConversation.lastMessage,
           unreadCount: 0,
-          assignedTo: _activeConversation.assignedTo,
           humanTakeoverStartedAt: DateTime.now().toUtc().toIso8601String(),
-          aiEnabled: _activeConversation.aiEnabled,
+          humanLastActivityAt: DateTime.now().toUtc().toIso8601String(),
+          humanTakeoverBy: _supabase.client.auth.currentUser?.id,
         );
       });
     } catch (e) {
@@ -141,16 +210,10 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       await _supabase.resumeAI(_activeConversation.id);
       if (!mounted) return;
       setState(() {
-        _activeConversation = models.Conversation(
-          id: _activeConversation.id,
-          contactId: _activeConversation.contactId,
-          contactName: _activeConversation.contactName,
+        _activeConversation = _activeConversation.copyWith(
           status: 'active',
-          lastMessage: _activeConversation.lastMessage,
           unreadCount: 0,
-          assignedTo: _activeConversation.assignedTo,
-          humanTakeoverStartedAt: null,
-          aiEnabled: _activeConversation.aiEnabled,
+          clearHumanTakeover: true,
         );
       });
     } catch (e) {
@@ -161,62 +224,79 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     }
   }
 
+  String _memberName(models.Profile p) {
+    final name = '${p.firstName} ${p.lastName}'.trim();
+    return name.isNotEmpty ? name : p.email;
+  }
+
+  String get _assigneeLabel {
+    final id = _activeConversation.assignedTo;
+    if (id == null || id.isEmpty) return 'Unassigned';
+    if (id == _supabase.client.auth.currentUser?.id) return 'Me';
+    for (final p in _team) {
+      if (p.id == id) return _memberName(p);
+    }
+    return 'Teammate';
+  }
+
   void _handleAssign() {
+    final myId = _supabase.client.auth.currentUser?.id;
+    final others = _team.where((p) => p.id != myId).toList();
+
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Text(
-                  'Assign Chat',
-                  style: TextStyle(color: AppColors.text, fontSize: 16, fontWeight: FontWeight.bold),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(sheetContext).size.height * 0.7),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(
+                    'Assign Chat',
+                    style: TextStyle(color: AppColors.text, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
                 ),
-              ),
-              const Divider(),
-              ListTile(
-                title: Text('Unassigned', style: TextStyle(color: AppColors.text)),
-                onTap: () => _updateAssignment(null),
-              ),
-              ListTile(
-                title: Text('Me (Agent)', style: TextStyle(color: AppColors.text)),
-                onTap: () => _updateAssignment('Agent'),
-              ),
-              ListTile(
-                title: Text('Apurva (Owner)', style: TextStyle(color: AppColors.text)),
-                onTap: () => _updateAssignment('Apurva'),
-              ),
-            ],
+                const Divider(),
+                ListTile(
+                  title: Text('Unassigned', style: TextStyle(color: AppColors.text)),
+                  onTap: () => _updateAssignment(null),
+                ),
+                if (myId != null)
+                  ListTile(
+                    title: Text('Me', style: TextStyle(color: AppColors.text)),
+                    onTap: () => _updateAssignment(myId),
+                  ),
+                for (final p in others)
+                  ListTile(
+                    title: Text(_memberName(p), style: TextStyle(color: AppColors.text)),
+                    subtitle: Text(p.email, style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                    onTap: () => _updateAssignment(p.id),
+                  ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Future<void> _updateAssignment(String? agent) async {
+  Future<void> _updateAssignment(String? userId) async {
     Navigator.pop(context); // Close bottom sheet
     try {
-      await _supabase.assignConversation(_activeConversation.id, agent ?? '');
+      await _supabase.assignConversation(_activeConversation.id, userId);
       if (!mounted) return;
       setState(() {
-        _activeConversation = models.Conversation(
-          id: _activeConversation.id,
-          contactId: _activeConversation.contactId,
-          contactName: _activeConversation.contactName,
-          status: _activeConversation.status,
-          lastMessage: _activeConversation.lastMessage,
-          unreadCount: 0,
-          assignedTo: agent,
-          humanTakeoverStartedAt: _activeConversation.humanTakeoverStartedAt,
-          aiEnabled: _activeConversation.aiEnabled,
-        );
+        _activeConversation = userId == null
+            ? _activeConversation.copyWith(clearAssignedTo: true)
+            : _activeConversation.copyWith(assignedTo: userId);
       });
     } catch (e) {
       if (!mounted) return;
@@ -226,318 +306,350 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     }
   }
 
+  Future<void> _handleAiCall() async {
+    final integrationId = _activeConversation.integrationId;
+    if (integrationId == null || integrationId.isEmpty) return;
+
+    final name = _activeConversation.contactName.isNotEmpty
+        ? _activeConversation.contactName
+        : _activeConversation.contactId;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Call with AI?', style: TextStyle(color: AppColors.text)),
+        content: Text(
+          'The AI assistant will call $name on WhatsApp. If they have not allowed calls yet, '
+          'they will get a permission request first.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Call')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final message = await _supabase.startAiCall(
+        integrationId: integrationId,
+        toPhone: _activeConversation.contactId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } on CallingApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.notAvailable ? 'AI Calling is not enabled for your account yet.' : e.message),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start the call: $e'), backgroundColor: AppColors.error),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bool isClosed = _activeConversation.status == 'closed';
+    final bool isClosed = _activeConversation.status == 'closed' || _activeConversation.status == 'archived';
     final bool isEscalated = _activeConversation.status == 'escalated';
     final bool isAi = !isClosed && !isEscalated;
     final bool isHuman = !isClosed && isEscalated;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_activeConversation.contactName.isNotEmpty
-            ? _activeConversation.contactName
-            : _activeConversation.contactId),
+        title: Text(
+          _activeConversation.contactName.isNotEmpty
+              ? _activeConversation.contactName
+              : _activeConversation.contactId,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
+          if (_activeConversation.integrationId != null)
+            IconButton(
+              tooltip: 'Call with AI',
+              icon: Icon(LucideIcons.phone_call, color: AppColors.primary),
+              onPressed: _handleAiCall,
+            ),
           IconButton(
+            tooltip: 'Assign chat',
             icon: Icon(LucideIcons.user_check, color: AppColors.primary),
             onPressed: _handleAssign,
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Assignment & AI Mode Status Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: AppColors.surface,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Assigned to: ${_activeConversation.assignedTo ?? "Unassigned"}',
-                  style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+      body: Center(
+        // Keeps the thread readable on tablets / landscape instead of stretching edge to edge.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Column(
+            children: [
+              // Assignment & AI Mode Status Bar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                color: AppColors.surface,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Assigned to: $_assigneeLabel',
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      isClosed
+                          ? '🔒 Closed'
+                          : isAi
+                              ? '🤖 AI Handled'
+                              : '👤 Agent Handled',
+                      style: TextStyle(
+                        color: isClosed
+                            ? AppColors.textMuted
+                            : isAi
+                                ? AppColors.success
+                                : AppColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
                 ),
-                Text(
-                  isClosed
-                      ? '🔒 Closed'
-                      : isAi
-                          ? '🤖 AI Handled'
-                          : '👤 Agent Handled',
-                  style: TextStyle(
-                    color: isClosed
-                        ? AppColors.textMuted
-                        : isAi
-                            ? AppColors.success
-                            : AppColors.primary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
+              ),
+              const Divider(),
+
+              // Message Thread List
+              Expanded(
+                child: _isLoading && _messages.isEmpty
+                    ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    : _messages.isEmpty
+                        ? Center(
+                            child: Text('No messages in this chat yet.',
+                                style: TextStyle(color: AppColors.textMuted)),
+                          )
+                        : ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.all(16),
+                            itemCount: _messages.length,
+                            itemBuilder: (context, index) => _buildMessage(_messages[index]),
+                          ),
+              ),
+
+              // Takeover Banner if AI is active
+              if (isAi)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  color: AppColors.surface,
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.bot, color: AppColors.success),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'AI is currently handling this conversation.',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                        ),
+                      ),
+                      ElevatedButton(
+                        onPressed: _handleTakeover,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          textStyle: const TextStyle(fontSize: 12),
+                        ),
+                        child: const Text('Takeover'),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          const Divider(),
 
-          // Message Thread List
-          Expanded(
-            child: _isLoading && _messages.isEmpty
-                ? Center(child: CircularProgressIndicator(color: AppColors.primary))
-                : StreamBuilder<List<Map<String, dynamic>>>(
-                    stream: _supabase.subscribeMessages(_activeConversation.id),
-                    builder: (context, snapshot) {
-                      if (snapshot.hasData) {
-                        for (var change in snapshot.data!) {
-                          final idx = _messages.indexWhere((m) => m.id == change['id'].toString());
-                          final isFromUser = change['is_from_user'] ?? (change['sender_type'] == 'customer');
-                          final sentByAi = change['sent_by_ai'] ?? (change['sender_type'] == 'ai');
+              // Release back to AI option if Human is active
+              if (isHuman)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  color: AppColors.surface,
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.user, color: AppColors.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'You are managing this conversation.',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _handleRelease,
+                        child: const Text('Release to AI'),
+                      ),
+                    ],
+                  ),
+                ),
 
-                          final updatedMsg = models.Message(
-                            id: change['id'].toString(),
-                            conversationId: change['conversation_id'] as String,
-                            content: (change['content'] ?? change['text'] ?? '') as String,
-                            senderId: change['sender_id'] as String?,
-                            isFromUser: isFromUser as bool,
-                            sentByAi: sentByAi as bool,
-                            createdAt: (change['created_at'] ?? '') as String,
-                            status: (change['status'] ?? 'sent') as String,
-                            messageType: (change['message_type'] ?? change['messageType']) as String?,
-                            metadata: change['metadata'] is Map
-                                ? Map<String, dynamic>.from(change['metadata'] as Map)
-                                : null,
-                          );
-
-                          if (idx != -1) {
-                            _messages[idx] = updatedMsg;
-                          } else {
-                            _messages.add(updatedMsg);
-                          }
-                        }
-                        // Sort by date ascending for chat UI list
-                        _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-                        _scrollToBottom();
-                      }
-
-                      if (_messages.isEmpty) {
-                        return Center(
-                          child: Text('No messages in this chat yet.', style: TextStyle(color: AppColors.textMuted)),
-                        );
-                      }
-
-                      return ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final m = _messages[index];
-                          final isMe = !m.isFromUser;
-
-                          // Format time
-                          String formattedTime = '';
-                          try {
-                            final parsedDate = DateTime.parse(m.createdAt).toLocal();
-                            formattedTime = DateFormat('h:mm a').format(parsedDate);
-                          } catch (_) {}
-
-                          return Align(
-                            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.75,
-                              ),
-                              child: m.messageType == 'audio'
-                                  ? _buildVoiceNoteBubble(m, isMe)
-                                  : Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                      decoration: BoxDecoration(
-                                        color: isMe
-                                            ? AppColors.primary.withValues(alpha: 0.9)
-                                            : AppColors.surfaceLight,
-                                        borderRadius: BorderRadius.only(
-                                          topLeft: const Radius.circular(12),
-                                          topRight: const Radius.circular(12),
-                                          bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
-                                          bottomRight: isMe ? Radius.zero : const Radius.circular(12),
-                                        ),
-                                        border: Border.all(
-                                          color: isMe ? Colors.transparent : AppColors.border,
-                                        ),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          if (!isMe && m.sentByAi)
-                                            Padding(
-                                              padding: EdgeInsets.only(bottom: 4.0),
-                                              child: Text(
-                                                'Syncflo AI Bot',
-                                                style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold),
-                                              ),
-                                            ),
-                                          Text(
-                                            m.content,
-                                            style: TextStyle(
-                                              color: isMe ? AppColors.textInverse : AppColors.text,
-                                              fontSize: 15,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            mainAxisAlignment: MainAxisAlignment.end,
-                                            children: [
-                                              Text(
-                                                formattedTime,
-                                                style: TextStyle(
-                                                  color: isMe ? AppColors.textInverse.withValues(alpha: 0.5) : AppColors.textMuted,
-                                                  fontSize: 10,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                            ),
-                          );
-                        },
+              // Quick Replies List (if not closed and not AI)
+              if (isHuman && _quickReplies.isNotEmpty)
+                SizedBox(
+                  height: 48,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    itemCount: _quickReplies.length,
+                    itemBuilder: (context, index) {
+                      final reply = _quickReplies[index];
+                      return GestureDetector(
+                        onTap: _isSending ? null : () => _handleSend(reply),
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceLight,
+                            border: Border.all(color: AppColors.border),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Text(
+                            reply,
+                            style: TextStyle(color: AppColors.text, fontSize: 12),
+                          ),
+                        ),
                       );
                     },
                   ),
+                ),
+
+              // Message Input Field (only while a human is managing the chat)
+              if (isHuman)
+                SafeArea(
+                  top: false,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    color: AppColors.surface,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceLight,
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: TextField(
+                              controller: _messageController,
+                              style: TextStyle(color: AppColors.text, fontSize: 15),
+                              minLines: 1,
+                              maxLines: 5,
+                              textCapitalization: TextCapitalization.sentences,
+                              decoration: const InputDecoration(
+                                hintText: 'Type a message...',
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        CircleAvatar(
+                          backgroundColor: AppColors.primary,
+                          radius: 20,
+                          child: IconButton(
+                            icon: _isSending
+                                ? SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.textInverse),
+                                    ),
+                                  )
+                                : Icon(LucideIcons.send, color: AppColors.textInverse, size: 18),
+                            onPressed: _isSending ? null : () => _handleSend(_messageController.text),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
 
-          // Takeover Banner if AI is active
-          if (isAi)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: AppColors.surface,
-              child: Row(
-                children: [
-                  Icon(LucideIcons.bot, color: AppColors.success),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'AI is currently handling this conversation.',
-                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: _handleTakeover,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      textStyle: const TextStyle(fontSize: 12),
-                    ),
-                    child: const Text('Takeover'),
-                  ),
-                ],
-              ),
-            ),
+  Widget _buildMessage(models.Message m) {
+    final isMe = !m.isFromUser;
 
-          // Release back to AI option if Human is active
-          if (isHuman)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: AppColors.surface,
-              child: Row(
-                children: [
-                  Icon(LucideIcons.user, color: AppColors.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'You are managing this conversation.',
-                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: _handleRelease,
-                    child: const Text('Release to AI'),
-                  ),
-                ],
-              ),
-            ),
+    String formattedTime = '';
+    try {
+      final parsedDate = DateTime.parse(m.createdAt).toLocal();
+      formattedTime = DateFormat('h:mm a').format(parsedDate);
+    } catch (_) {}
 
-          // Quick Replies List (if not closed and not AI)
-          if (!isClosed && !isAi && _quickReplies.isNotEmpty)
-            SizedBox(
-              height: 48,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                itemCount: _quickReplies.length,
-                itemBuilder: (context, index) {
-                  final reply = _quickReplies[index];
-                  return GestureDetector(
-                    onTap: () => _handleSend(reply),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceLight,
-                        border: Border.all(color: AppColors.border),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        reply,
-                        style: TextStyle(color: AppColors.text, fontSize: 12),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-          // Message Input Field (if not closed and not AI)
-          if (!isClosed && !isAi)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: AppColors.surface,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceLight,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: TextField(
-                        controller: _messageController,
-                        style: TextStyle(color: AppColors.text, fontSize: 15),
-                        maxLines: null,
-                        decoration: const InputDecoration(
-                          hintText: 'Type a message...',
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width.clamp(0, 760) * 0.78,
+        ),
+        child: m.messageType == 'audio'
+            ? _buildVoiceNoteBubble(m, isMe)
+            : Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isMe ? AppColors.primary.withValues(alpha: 0.9) : AppColors.surfaceLight,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(12),
+                    topRight: const Radius.circular(12),
+                    bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
+                    bottomRight: isMe ? Radius.zero : const Radius.circular(12),
+                  ),
+                  border: Border.all(color: isMe ? Colors.transparent : AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!isMe && m.sentByAi)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4.0),
+                        child: Text(
+                          'Syncflo AI Bot',
+                          style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold),
                         ),
                       ),
+                    Text(
+                      m.content,
+                      style: TextStyle(
+                        color: isMe ? AppColors.textInverse : AppColors.text,
+                        fontSize: 15,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  CircleAvatar(
-                    backgroundColor: AppColors.primary,
-                    radius: 20,
-                    child: IconButton(
-                      icon: _isSending
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(AppColors.textInverse),
-                              ),
-                            )
-                          : Icon(LucideIcons.send, color: AppColors.textInverse, size: 18),
-                      onPressed: _isSending ? null : () => _handleSend(_messageController.text),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          formattedTime,
+                          style: TextStyle(
+                            color: isMe ? AppColors.textInverse.withValues(alpha: 0.5) : AppColors.textMuted,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-        ],
       ),
     );
   }
@@ -547,14 +659,16 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     final isGenerated = audioMeta?['generated'] == true;
     final transcript = (audioMeta?['transcript'] as String?)?.isNotEmpty == true
         ? audioMeta!['transcript'] as String
-        : m.content.isNotEmpty ? m.content : null;
+        : m.content.isNotEmpty
+            ? m.content
+            : null;
     final label = isGenerated ? 'Voice note sent' : 'Voice note received';
 
     return Container(
       padding: const EdgeInsets.all(12),
       constraints: BoxConstraints(
         minWidth: 200,
-        maxWidth: MediaQuery.of(context).size.width * 0.75,
+        maxWidth: MediaQuery.of(context).size.width.clamp(0, 760) * 0.78,
       ),
       decoration: BoxDecoration(
         color: AppColors.surfaceLight,
@@ -612,4 +726,3 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     );
   }
 }
-

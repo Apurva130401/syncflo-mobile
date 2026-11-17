@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/push_notification_service.dart';
 import '../core/in_app_notification_service.dart';
+import '../core/realtime_alerts_service.dart';
 import 'overview/overview_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -18,6 +19,8 @@ class _HomeScreenState extends State<HomeScreen> {
     PushNotificationService().initialize();
     // Initialize real-time in-app notification listener
     InAppNotificationService().initialize();
+    // Foreground alerts for chats that need a human and for AI call updates
+    RealtimeAlertsService().start();
   }
 
   @override

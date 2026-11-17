@@ -1,4 +1,5 @@
 export 'contact.dart';
+export 'call_record.dart';
 
 class User {
   final String id;
@@ -57,6 +58,8 @@ class Conversation {
   final String? humanLastActivityAt;
   final int? humanTakeoverTimeoutMinutes;
   final String? humanTakeoverBy;
+  final String? integrationId;
+  final String? lastMessageAt;
 
   Conversation({
     required this.id,
@@ -71,7 +74,63 @@ class Conversation {
     this.humanLastActivityAt,
     this.humanTakeoverTimeoutMinutes,
     this.humanTakeoverBy,
+    this.integrationId,
+    this.lastMessageAt,
   });
+
+  /// Builds a conversation from a raw `whatsapp_conversations` row (REST or realtime).
+  factory Conversation.fromRow(Map<String, dynamic> c) {
+    String? str(dynamic v) => v?.toString();
+    final name = (c['display_name'] ?? c['contact_name'] ?? c['contactName'] ?? '').toString();
+    return Conversation(
+      id: c['id'].toString(),
+      contactId: (c['contact_id'] ?? c['contactId'] ?? '').toString(),
+      contactName: name,
+      status: (c['status'] ?? 'active').toString(),
+      lastMessage: str(c['last_message_preview'] ?? c['last_message']),
+      unreadCount: ((c['unread_count'] ?? c['unreadCount'] ?? 0) as num).toInt(),
+      assignedTo: str(c['assigned_to'] ?? c['assignedTo']),
+      humanTakeoverStartedAt: str(c['human_takeover_started_at'] ?? c['humanTakeoverStartedAt']),
+      aiEnabled: (c['ai_enabled'] ?? c['aiEnabled'] ?? true) as bool,
+      humanLastActivityAt: str(c['human_last_activity_at'] ?? c['humanLastActivityAt']),
+      humanTakeoverTimeoutMinutes:
+          ((c['human_takeover_timeout_minutes'] ?? c['humanTakeoverTimeoutMinutes']) as num?)?.toInt(),
+      humanTakeoverBy: str(c['human_takeover_by'] ?? c['humanTakeoverBy']),
+      integrationId: str(c['integration_id']),
+      lastMessageAt: str(c['last_message_at']),
+    );
+  }
+
+  /// Copy with overrides. `clearHumanTakeover` nulls the takeover fields; `clearAssignedTo` nulls the assignee.
+  Conversation copyWith({
+    String? status,
+    String? lastMessage,
+    int? unreadCount,
+    String? assignedTo,
+    bool clearAssignedTo = false,
+    String? humanTakeoverStartedAt,
+    String? humanLastActivityAt,
+    String? humanTakeoverBy,
+    bool clearHumanTakeover = false,
+  }) {
+    return Conversation(
+      id: id,
+      contactId: contactId,
+      contactName: contactName,
+      status: status ?? this.status,
+      lastMessage: lastMessage ?? this.lastMessage,
+      unreadCount: unreadCount ?? this.unreadCount,
+      assignedTo: clearAssignedTo ? null : (assignedTo ?? this.assignedTo),
+      humanTakeoverStartedAt:
+          clearHumanTakeover ? null : (humanTakeoverStartedAt ?? this.humanTakeoverStartedAt),
+      aiEnabled: aiEnabled,
+      humanLastActivityAt: clearHumanTakeover ? null : (humanLastActivityAt ?? this.humanLastActivityAt),
+      humanTakeoverTimeoutMinutes: humanTakeoverTimeoutMinutes,
+      humanTakeoverBy: clearHumanTakeover ? null : (humanTakeoverBy ?? this.humanTakeoverBy),
+      integrationId: integrationId,
+      lastMessageAt: lastMessageAt,
+    );
+  }
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     return Conversation(
@@ -119,6 +178,7 @@ class Message {
   final String status; // 'sent' | 'delivered' | 'read' | 'failed'
   final String? messageType; // 'text' | 'audio' | 'image' | 'document' | etc.
   final Map<String, dynamic>? metadata;
+  final String? waMessageId; // WhatsApp message id, used to de-duplicate sent messages
 
   Message({
     required this.id,
@@ -131,7 +191,28 @@ class Message {
     required this.status,
     this.messageType,
     this.metadata,
+    this.waMessageId,
   });
+
+  /// Builds a message from a raw `whatsapp_messages` row (REST or realtime).
+  factory Message.fromRow(Map<String, dynamic> m) {
+    final isFromUser = m['is_from_user'] ?? (m['sender_type'] == 'customer');
+    final sentByAi = m['sent_by_ai'] ?? (m['sender_type'] == 'ai');
+    final rawMetadata = m['metadata'];
+    return Message(
+      id: m['id'].toString(),
+      conversationId: (m['conversation_id'] ?? m['conversationId'] ?? '').toString(),
+      content: (m['content'] ?? m['text'] ?? '').toString(),
+      senderId: (m['sender_id'] ?? m['senderId'])?.toString(),
+      isFromUser: isFromUser == true,
+      sentByAi: sentByAi == true,
+      createdAt: (m['created_at'] ?? m['createdAt'] ?? '').toString(),
+      status: (m['status'] ?? 'sent').toString(),
+      messageType: (m['message_type'] ?? m['messageType'])?.toString(),
+      metadata: rawMetadata is Map ? Map<String, dynamic>.from(rawMetadata) : null,
+      waMessageId: m['whatsapp_message_id']?.toString(),
+    );
+  }
 
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(

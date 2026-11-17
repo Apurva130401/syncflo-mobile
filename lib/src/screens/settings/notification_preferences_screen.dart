@@ -14,6 +14,7 @@ class _NotificationPreferencesScreenState extends State<NotificationPreferencesS
   bool _notifyEscalation = true;
   bool _notifyMessage = true;
   bool _notifyTeam = true;
+  bool _notifyCalls = true;
   bool _soundEnabled = true;
   bool _hapticsEnabled = true;
 
@@ -30,6 +31,7 @@ class _NotificationPreferencesScreenState extends State<NotificationPreferencesS
       _notifyEscalation = prefs.getBool('notify_escalation') ?? true;
       _notifyMessage = prefs.getBool('notify_message') ?? true;
       _notifyTeam = prefs.getBool('notify_team') ?? true;
+      _notifyCalls = prefs.getBool('notify_calls') ?? true;
       _soundEnabled = prefs.getBool('sound_enabled') ?? true;
       _hapticsEnabled = prefs.getBool('haptics_enabled') ?? true;
     });
@@ -61,6 +63,10 @@ class _NotificationPreferencesScreenState extends State<NotificationPreferencesS
           _buildToggle('New Message', 'Get alerted when a customer sends a message', _notifyMessage, (v) {
             setState(() => _notifyMessage = v);
             _savePref('notify_message', v);
+          }),
+          _buildToggle('AI Calls', 'Get alerted when the AI answers or finishes a WhatsApp call', _notifyCalls, (v) {
+            setState(() => _notifyCalls = v);
+            _savePref('notify_calls', v);
           }),
           _buildToggle('Team Updates', 'Get alerted on assignment changes or closures', _notifyTeam, (v) {
             setState(() => _notifyTeam = v);

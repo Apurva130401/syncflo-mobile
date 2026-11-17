@@ -1,9 +1,13 @@
 import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'active_chat.dart';
+import 'app_router.dart';
+import 'notification_prefs.dart';
 
 /// Top-level background message handler (must be a top-level function)
 @pragma('vm:entry-point')
@@ -16,6 +20,10 @@ class PushNotificationService {
   static final PushNotificationService _instance = PushNotificationService._internal();
   factory PushNotificationService() => _instance;
   PushNotificationService._internal();
+
+  static const _messagesChannelId = 'syncflo_messages';
+  static const _callsChannelId = 'syncflo_calls';
+  static const _tokenPrefKey = 'fcm_token';
 
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
@@ -46,54 +54,75 @@ class PushNotificationService {
       return;
     }
 
-    // Set up local notification channel for Android foreground messages
+    // On iOS the system would show its own banner for foreground pushes on top of our local one.
+    await _messaging.setForegroundNotificationPresentationOptions(alert: false, badge: false, sound: false);
+
+    // Set up local notification channels for foreground messages
     await _setupLocalNotifications();
 
     // Get and register the FCM token
     await _registerToken();
 
     // Listen for token refresh
-    _messaging.onTokenRefresh.listen((newToken) {
-      _saveTokenToSupabase(newToken);
-    });
+    _messaging.onTokenRefresh.listen(_saveTokenToSupabase);
 
     // Handle foreground messages
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
-    // Handle notification tap when app is in background/terminated
+    // Handle notification tap when app is in background
     FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
 
-    // Check if app was opened from a terminated state via notification
+    // Check if app was opened from a terminated state via a push
     final initialMessage = await _messaging.getInitialMessage();
     if (initialMessage != null) {
       _handleNotificationTap(initialMessage);
+    }
+
+    // ...or via one of our own local notifications
+    final launch = await _localNotifications.getNotificationAppLaunchDetails();
+    if (launch?.didNotificationLaunchApp == true) {
+      _openAfterFrame(launch?.notificationResponse?.payload);
     }
   }
 
   /// Set up the local notification plugin for showing foreground notifications
   Future<void> _setupLocalNotifications() async {
-    const androidChannel = AndroidNotificationChannel(
-      'syncflo_messages',
+    const messagesChannel = AndroidNotificationChannel(
+      _messagesChannelId,
       'SyncFlo Messages',
       description: 'New message notifications from SyncFlo Dashboard',
       importance: Importance.high,
       playSound: true,
       enableVibration: true,
     );
+    const callsChannel = AndroidNotificationChannel(
+      _callsChannelId,
+      'AI Calls',
+      description: 'Incoming and finished WhatsApp AI calls',
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
+    );
 
-    // Create the notification channel on Android
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(androidChannel);
+    final android = _localNotifications
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await android?.createNotificationChannel(messagesChannel);
+    await android?.createNotificationChannel(callsChannel);
 
     const androidSettings = AndroidInitializationSettings('@drawable/ic_notification');
-    const initSettings = InitializationSettings(android: androidSettings);
+    // Permission is already requested through Firebase above.
+    const darwinSettings = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
+    const initSettings = InitializationSettings(android: androidSettings, iOS: darwinSettings);
 
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (response) {
         debugPrint('[LocalNotif] Tapped notification: ${response.payload}');
-        // Future: navigate to specific conversation using payload
+        AppRouter.openPayload(response.payload);
       },
     );
   }
@@ -103,7 +132,7 @@ class PushNotificationService {
     try {
       final token = await _messaging.getToken();
       if (token != null) {
-        debugPrint('[FCM] Device token: ${token.substring(0, 20)}...');
+        debugPrint('[FCM] Device token registered (${token.length} chars)');
         await _saveTokenToSupabase(token);
       }
     } catch (e) {
@@ -111,117 +140,136 @@ class PushNotificationService {
     }
   }
 
-  /// Save/update the FCM token in the device_tokens table
+  String get _platform => Platform.isAndroid ? 'android' : 'ios';
+
+  /// Save the FCM token in the device_tokens table.
+  ///
+  /// The table is unique on (user_id, token) and its RLS only allows select/insert/delete,
+  /// so we insert-ignore-duplicates (never UPDATE) and remove the token this device used
+  /// before, so the dashboard doesn't keep pushing to stale tokens.
   Future<void> _saveTokenToSupabase(String token) async {
     try {
       final client = Supabase.instance.client;
       final user = client.auth.currentUser;
       if (user == null) return;
 
-      // Upsert: if a row with the same user_id and platform exists, update it
+      final prefs = await SharedPreferences.getInstance();
+      final previous = prefs.getString(_tokenPrefKey);
+      if (previous != null && previous != token) {
+        await client.from('device_tokens').delete().eq('user_id', user.id).eq('token', previous);
+      }
+
       await client.from('device_tokens').upsert(
         {
           'user_id': user.id,
           'token': token,
-          'platform': Platform.isAndroid ? 'android' : 'ios',
+          'platform': _platform,
           'last_used_at': DateTime.now().toUtc().toIso8601String(),
         },
-        onConflict: 'user_id, platform',
+        onConflict: 'user_id,token',
+        ignoreDuplicates: true,
       );
-
+      await prefs.setString(_tokenPrefKey, token);
       debugPrint('[FCM] Token saved to device_tokens table');
     } catch (e) {
       debugPrint('[FCM] Error saving token: $e');
-      // Fallback: try insert if upsert fails (unique constraint might not exist)
-      try {
-        final client = Supabase.instance.client;
-        final user = client.auth.currentUser;
-        if (user == null) return;
-
-        // Delete old tokens for this user+platform, then insert new one
-        await client.from('device_tokens')
-            .delete()
-            .eq('user_id', user.id)
-            .eq('platform', Platform.isAndroid ? 'android' : 'ios');
-
-        await client.from('device_tokens').insert({
-          'user_id': user.id,
-          'token': token,
-          'platform': Platform.isAndroid ? 'android' : 'ios',
-          'last_used_at': DateTime.now().toUtc().toIso8601String(),
-        });
-
-        debugPrint('[FCM] Token saved via fallback insert');
-      } catch (e2) {
-        debugPrint('[FCM] Fallback insert also failed: $e2');
-      }
     }
   }
 
-  /// Show a local notification when a message arrives while the app is in the foreground
-  void _handleForegroundMessage(RemoteMessage message) {
-    debugPrint('[FCM] Foreground message: ${message.notification?.title}');
-
+  /// Show a local notification when a push arrives while the app is in the foreground.
+  Future<void> _handleForegroundMessage(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
 
-    _localNotifications.show(
-      notification.hashCode,
+    final data = message.data;
+    final conversationId = (data['conversationId'] ?? data['conversation_id'])?.toString();
+    final type = data['type']?.toString() ?? '';
+    final isCall = type.contains('call');
+
+    // Don't alert for the chat that is already open on screen.
+    if (conversationId != null && conversationId == ActiveChat.conversationId) return;
+
+    if (isCall ? !await NotificationPrefs.calls() : !await NotificationPrefs.messages()) return;
+
+    await showLocalNotification(
+      // Same id as the realtime alert for this chat, so the two replace each other instead of doubling up.
+      conversationId != null ? conversationId.hashCode : notification.hashCode,
       notification.title ?? 'SyncFlo Dashboard',
       notification.body ?? 'You have a new message',
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'syncflo_messages',
-          'SyncFlo Messages',
-          channelDescription: 'New message notifications from SyncFlo Dashboard',
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@drawable/ic_notification',
-        ),
-      ),
-      payload: message.data['conversation_id'],
+      payload: isCall ? 'calls' : (conversationId != null ? 'chat:$conversationId' : null),
+      channelId: isCall ? _callsChannelId : _messagesChannelId,
     );
   }
 
-  /// Handle when the user taps a notification (app in background/terminated)
+  /// Handle when the user taps a push (app in background)
   void _handleNotificationTap(RemoteMessage message) {
     debugPrint('[FCM] Notification tapped: ${message.data}');
-    // Future: navigate to the specific conversation
-    // final conversationId = message.data['conversation_id'];
+    final data = message.data;
+    final conversationId = (data['conversationId'] ?? data['conversation_id'])?.toString();
+    final type = data['type']?.toString() ?? '';
+    if (type.contains('call')) {
+      _openAfterFrame('calls');
+    } else if (conversationId != null && conversationId.isNotEmpty) {
+      _openAfterFrame('chat:$conversationId');
+    }
   }
 
-  /// Remove the device token when user logs out
+  /// Waits for the first frame so the navigator exists on a cold start.
+  void _openAfterFrame(String? payload) {
+    if (payload == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 600), () => AppRouter.openPayload(payload));
+    });
+  }
+
+  /// Remove this device's token when the user logs out
   Future<void> removeToken() async {
     try {
       final client = Supabase.instance.client;
       final user = client.auth.currentUser;
       if (user == null) return;
 
-      await client.from('device_tokens')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('platform', Platform.isAndroid ? 'android' : 'ios');
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_tokenPrefKey);
+      var query = client.from('device_tokens').delete().eq('user_id', user.id);
+      query = token != null ? query.eq('token', token) : query.eq('platform', _platform);
+      await query;
+      await prefs.remove(_tokenPrefKey);
 
+      // Let the next login on this device re-initialize cleanly.
+      _initialized = false;
       debugPrint('[FCM] Token removed from device_tokens');
     } catch (e) {
       debugPrint('[FCM] Error removing token: $e');
     }
   }
 
-  /// Show a manual local notification (e.g. for human takeover auto-resume alerts)
-  Future<void> showLocalNotification(int id, String title, String body, {String? payload}) async {
+  /// Show a local notification (foreground alerts, takeover warnings, AI call updates).
+  Future<void> showLocalNotification(
+    int id,
+    String title,
+    String body, {
+    String? payload,
+    String channelId = _messagesChannelId,
+  }) async {
+    final isCalls = channelId == _callsChannelId;
     await _localNotifications.show(
       id,
       title,
       body,
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
-          'syncflo_messages',
-          'SyncFlo Messages',
-          channelDescription: 'New message notifications from SyncFlo Dashboard',
+          channelId,
+          isCalls ? 'AI Calls' : 'SyncFlo Messages',
+          channelDescription:
+              isCalls ? 'Incoming and finished WhatsApp AI calls' : 'New message notifications from SyncFlo Dashboard',
           importance: Importance.high,
           priority: Priority.high,
           icon: '@drawable/ic_notification',
+          playSound: await NotificationPrefs.sound(),
+        ),
+        iOS: DarwinNotificationDetails(
+          presentSound: await NotificationPrefs.sound(),
         ),
       ),
       payload: payload,

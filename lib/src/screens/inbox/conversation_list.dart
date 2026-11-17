@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
+import 'package:intl/intl.dart';
 import '../../core/supabase_service.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
@@ -12,7 +14,6 @@ class ConversationListScreen extends StatefulWidget {
   State<ConversationListScreen> createState() => _ConversationListScreenState();
 }
 
-
 class _ConversationListScreenState extends State<ConversationListScreen> {
   final SupabaseService _supabase = SupabaseService();
   String _filter = 'all'; // 'all', 'ai', 'human', 'closed'
@@ -20,6 +21,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
   bool _unreadOnly = false;
   final TextEditingController _searchController = TextEditingController();
 
+  StreamSubscription<List<Map<String, dynamic>>>? _sub;
   List<Conversation> _conversations = [];
   bool _isLoading = true;
 
@@ -27,38 +29,56 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
   void initState() {
     super.initState();
     _loadData();
+    // Subscribe once. The old code created the stream inside build(), so every rebuild
+    // re-subscribed and the list flickered / lost its sort order.
+    _sub = _supabase.subscribeConversations().listen((rows) {
+      if (!mounted) return;
+      setState(() {
+        _conversations = _sorted(rows.map(Conversation.fromRow).toList());
+        _isLoading = false;
+      });
+    }, onError: (_) {});
   }
 
   @override
   void dispose() {
+    _sub?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
+  /// Most recent activity first (ids are random UUIDs, so they can't be used for ordering).
+  List<Conversation> _sorted(List<Conversation> list) {
+    DateTime when(Conversation c) =>
+        DateTime.tryParse(c.lastMessageAt ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+    list.sort((a, b) => when(b).compareTo(when(a)));
+    return list;
+  }
+
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
     try {
       final list = await _supabase.getConversations();
+      if (!mounted) return;
       setState(() {
-        _conversations = list;
+        _conversations = _sorted(list);
         _isLoading = false;
       });
     } catch (_) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+
+  bool _isClosed(Conversation c) => c.status == 'closed' || c.status == 'archived';
 
   List<Conversation> _getFilteredConversations() {
     var result = _conversations;
 
-    if (_filter != 'all') {
-      if (_filter == 'closed') {
-        result = result.where((c) => c.status == 'closed').toList();
-      } else if (_filter == 'ai') {
-        result = result.where((c) => c.status == 'active').toList();
-      } else if (_filter == 'human') {
-        result = result.where((c) => c.status == 'escalated').toList();
-      }
+    if (_filter == 'closed') {
+      result = result.where(_isClosed).toList();
+    } else if (_filter == 'ai') {
+      result = result.where((c) => c.status != 'escalated' && !_isClosed(c)).toList();
+    } else if (_filter == 'human') {
+      result = result.where((c) => c.status == 'escalated').toList();
     }
 
     if (_unreadOnly) {
@@ -67,13 +87,23 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
 
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
-      result = result.where((c) =>
-        c.contactName.toLowerCase().contains(q) ||
-        c.contactId.toLowerCase().contains(q)
-      ).toList();
+      result = result
+          .where((c) => c.contactName.toLowerCase().contains(q) || c.contactId.toLowerCase().contains(q))
+          .toList();
     }
 
     return result;
+  }
+
+  String _timeLabel(Conversation c) {
+    final t = DateTime.tryParse(c.lastMessageAt ?? '')?.toLocal();
+    if (t == null) return '';
+    final now = DateTime.now();
+    if (t.year == now.year && t.month == now.month && t.day == now.day) {
+      return DateFormat('h:mm a').format(t);
+    }
+    if (now.difference(t).inDays < 7) return DateFormat('EEE').format(t);
+    return DateFormat('MMM d').format(t);
   }
 
   Widget _buildFilterTab(String type, String label) {
@@ -103,6 +133,8 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final displayList = _getFilteredConversations();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Live Inbox'),
@@ -144,7 +176,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
                         border: InputBorder.none,
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(vertical: 10),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
                       ),
                       onChanged: (value) => setState(() => _searchQuery = value),
                     ),
@@ -208,43 +240,11 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
                 : RefreshIndicator(
                     onRefresh: _loadData,
                     color: AppColors.primary,
-                    child: StreamBuilder<List<Map<String, dynamic>>>(
-                      stream: _supabase.subscribeConversations(),
-                      builder: (context, snapshot) {
-                        if (snapshot.hasData) {
-                          for (var change in snapshot.data!) {
-                            final idx = _conversations.indexWhere((c) => c.id == change['id']);
-                            final updatedConv = Conversation(
-                              id: change['id'] as String,
-                              contactId: (change['contact_id'] ?? '') as String,
-                              contactName: (change['contact_name'] ?? '') as String,
-                              status: (change['status'] ?? 'active') as String,
-                              lastMessage: (change['last_message_preview'] ?? change['last_message'] ?? '') as String?,
-                              unreadCount: (change['unread_count'] ?? 0) as int,
-                              assignedTo: change['assigned_to'] as String?,
-                              humanTakeoverStartedAt: change['human_takeover_started_at'] as String?,
-                              aiEnabled: (change['ai_enabled'] ?? true) as bool,
-                              humanLastActivityAt: change['human_last_activity_at'] as String?,
-                              humanTakeoverTimeoutMinutes: change['human_takeover_timeout_minutes'] as int?,
-                              humanTakeoverBy: change['human_takeover_by'] as String?,
-                            );
-                            if (idx != -1) {
-                              _conversations[idx] = updatedConv;
-                            } else {
-                              _conversations.insert(0, updatedConv);
-                            }
-                          }
-                          // Re-sort so most recent chat updates bubble up
-                          _conversations.sort((a, b) => b.id.compareTo(a.id));
-                        }
-
-                        final displayList = _getFilteredConversations();
-
-                        if (displayList.isEmpty) {
-                          return ListView(
+                    child: displayList.isEmpty
+                        ? ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
                             children: [
-                              SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+                              SizedBox(height: MediaQuery.of(context).size.height * 0.2),
                               Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -270,116 +270,115 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
                                 ],
                               ),
                             ],
-                          );
-                        }
-
-                        return ListView.separated(
-                          itemCount: displayList.length,
-                          separatorBuilder: (context, index) => const Divider(),
-                          itemBuilder: (context, index) {
-                            final c = displayList[index];
-                            
-                            // Determine status indicator tag
-                            Color statusColor;
-                            String statusLabel;
-                            if (c.status == 'closed') {
-                              statusColor = AppColors.textMuted;
-                              statusLabel = 'Closed';
-                            } else if (c.status == 'escalated') {
-                              statusColor = AppColors.primary;
-                              statusLabel = 'Human';
-                            } else {
-                              statusColor = AppColors.success;
-                              statusLabel = 'AI Mode';
-                            }
-
-                            return ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: AppColors.surfaceLight,
-                                foregroundColor: AppColors.primary,
-                                child: Icon(LucideIcons.user),
-                              ),
-                              title: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      c.contactName.isNotEmpty ? c.contactName : c.contactId,
-                                      style: TextStyle(
-                                        color: AppColors.text,
-                                        fontWeight: c.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
-                                        fontSize: 16,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: statusColor.withValues(alpha: 0.1),
-                                      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      statusLabel,
-                                      style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              subtitle: Padding(
-                                padding: const EdgeInsets.only(top: 4.0),
-                                child: Text(
-                                  c.lastMessage != null && c.lastMessage!.isNotEmpty
-                                      ? c.lastMessage!
-                                      : 'No messages yet',
-                                  style: TextStyle(
-                                    color: c.unreadCount > 0 ? AppColors.text : AppColors.textMuted,
-                                    fontSize: 14,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              trailing: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  if (c.unreadCount > 0)
-                                    Container(
-                                      padding: const EdgeInsets.all(6),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primary,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: Text(
-                                        '${c.unreadCount}',
-                                        style: TextStyle(
-                                          color: AppColors.textInverse,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => ChatThreadScreen(conversation: c),
-                                  ),
-                                ).then((_) => _loadData()); // Reload when coming back
-                              },
-                            );
-                          },
-                        );
-                      },
-                    ),
+                          )
+                        : ListView.separated(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            itemCount: displayList.length,
+                            separatorBuilder: (context, index) => const Divider(),
+                            itemBuilder: (context, index) => _buildTile(displayList[index]),
+                          ),
                   ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTile(Conversation c) {
+    Color statusColor;
+    String statusLabel;
+    if (_isClosed(c)) {
+      statusColor = AppColors.textMuted;
+      statusLabel = 'Closed';
+    } else if (c.status == 'escalated') {
+      statusColor = AppColors.primary;
+      statusLabel = 'Human';
+    } else {
+      statusColor = AppColors.success;
+      statusLabel = 'AI Mode';
+    }
+
+    final time = _timeLabel(c);
+
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: AppColors.surfaceLight,
+        foregroundColor: AppColors.primary,
+        child: Icon(LucideIcons.user),
+      ),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              c.contactName.isNotEmpty ? c.contactName : c.contactId,
+              style: TextStyle(
+                color: AppColors.text,
+                fontWeight: c.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
+                fontSize: 16,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.1),
+              border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              statusLabel,
+              style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 4.0),
+        child: Text(
+          c.lastMessage != null && c.lastMessage!.isNotEmpty ? c.lastMessage! : 'No messages yet',
+          style: TextStyle(
+            color: c.unreadCount > 0 ? AppColors.text : AppColors.textMuted,
+            fontSize: 14,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (time.isNotEmpty)
+            Text(time, style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+          if (c.unreadCount > 0) ...[
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                '${c.unreadCount}',
+                style: TextStyle(
+                  color: AppColors.textInverse,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => ChatThreadScreen(conversation: c)),
+        ); // The realtime subscription keeps the list current when coming back.
+      },
     );
   }
 }

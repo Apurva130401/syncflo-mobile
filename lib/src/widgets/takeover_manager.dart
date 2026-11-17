@@ -23,6 +23,7 @@ class _TakeoverManagerState extends State<TakeoverManager> {
   // Notification countdown and modal states
   final Map<String, int> _lastNotifiedMins = {};
   final Set<String> _shownResumedDialogs = {};
+  final Set<String> _resuming = {};
   bool _isDialogOpen = false;
   String? _activeDialogChatId;
   BuildContext? _dialogContext;
@@ -58,24 +59,15 @@ class _TakeoverManagerState extends State<TakeoverManager> {
     _sub = _supabaseService.subscribeConversations().listen((data) {
       if (!mounted) return;
       setState(() {
-        _conversations = data.map((c) {
-          return Conversation(
-            id: c['id'] as String,
-            contactId: (c['contact_id'] ?? c['contactId'] ?? '') as String,
-            contactName: (c['contact_name'] ?? c['contactName'] ?? '') as String,
-            status: (c['status'] ?? 'active') as String,
-            lastMessage: (c['last_message_preview'] ?? c['last_message'] ?? '') as String?,
-            unreadCount: (c['unread_count'] ?? c['unreadCount'] ?? 0) as int,
-            assignedTo: (c['assigned_to'] ?? c['assignedTo']) as String?,
-            humanTakeoverStartedAt: (c['human_takeover_started_at'] ?? c['humanTakeoverStartedAt']) as String?,
-            aiEnabled: (c['ai_enabled'] ?? c['aiEnabled'] ?? true) as bool,
-            humanLastActivityAt: (c['human_last_activity_at'] ?? c['humanLastActivityAt']) as String?,
-            humanTakeoverTimeoutMinutes: (c['human_takeover_timeout_minutes'] ?? c['humanTakeoverTimeoutMinutes']) as int?,
-            humanTakeoverBy: (c['human_takeover_by'] ?? c['humanTakeoverBy']) as String?,
-          );
-        }).toList();
+        _conversations = data.map(Conversation.fromRow).toList();
       });
-    });
+    }, onError: (e) => debugPrint('[TakeoverManager] Conversation stream error: $e'));
+  }
+
+  /// Only warn about / auto-resume chats this user took over (not every escalated chat in the workspace).
+  bool _isMine(Conversation c) {
+    final me = _supabaseService.client.auth.currentUser?.id;
+    return c.humanTakeoverBy == null || c.humanTakeoverBy == me;
   }
 
   void _startTimer() {
@@ -97,7 +89,9 @@ class _TakeoverManagerState extends State<TakeoverManager> {
 
   void _checkConversations() async {
     final nowUtc = DateTime.now().toUtc();
-    final escalated = _conversations.where((c) => c.status == 'escalated' && c.humanLastActivityAt != null).toList();
+    final escalated = _conversations
+        .where((c) => c.status == 'escalated' && c.humanLastActivityAt != null && _isMine(c))
+        .toList();
 
     // Check if showing dialog for a chat that is no longer escalated or has been reset
     if (_isDialogOpen && _activeDialogChatId != null) {
@@ -149,6 +143,9 @@ class _TakeoverManagerState extends State<TakeoverManager> {
           _dismissActiveDialog();
         }
 
+        // The timer ticks every second; without this guard the resume call (and its
+        // notification) fired repeatedly until the realtime update arrived.
+        if (!_resuming.add(conv.id)) continue;
         try {
           await _supabaseService.resumeAI(conv.id);
 
@@ -169,12 +166,15 @@ class _TakeoverManagerState extends State<TakeoverManager> {
           _lastNotifiedMins.remove(conv.id);
         } catch (e) {
           debugPrint('[TakeoverManager] Auto-resume API failure for ${conv.id}: $e');
+          // Allow a retry on a later tick after a failure.
+          _resuming.remove(conv.id);
         }
       }
     }
 
     // Clean tracking states for conversations no longer escalated
     final escalatedIds = escalated.map((c) => c.id).toSet();
+    _resuming.removeWhere((id) => !escalatedIds.contains(id));
     _shownResumedDialogs.removeWhere((id) => !escalatedIds.contains(id));
     _lastNotifiedMins.removeWhere((id, min) => !escalatedIds.contains(id));
   }

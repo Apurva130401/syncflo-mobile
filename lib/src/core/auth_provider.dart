@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
+import 'package:url_launcher/url_launcher.dart';
 import '../models/models.dart';
 import 'push_notification_service.dart';
+import 'realtime_alerts_service.dart';
 import 'supabase_service.dart';
 
 class AuthProvider extends ChangeNotifier {
@@ -17,6 +19,7 @@ class AuthProvider extends ChangeNotifier {
 
   User? get user => _user;
   Profile? get profile => _profile;
+  bool get isAuthenticated => _user != null;
   bool get isLoading => _isLoading;
   String? get error => _error;
   ThemeMode get themeMode => _themeMode;
@@ -37,6 +40,9 @@ class AuthProvider extends ChangeNotifier {
     _supabaseService.client.auth.onAuthStateChange.listen((data) async {
       final session = data.session;
       if (session != null) {
+        try {
+          await closeInAppWebView();
+        } catch (_) {}
         try {
           final aal = _supabaseService.client.auth.mfa.getAuthenticatorAssuranceLevel();
           if (aal.currentLevel == supabase.AuthenticatorAssuranceLevels.aal2) {
@@ -237,6 +243,18 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> handleDeepLink(Uri uri) async {
+    final success = await _supabaseService.handleDeepLinkSession(uri);
+    if (success) {
+      try {
+        await closeInAppWebView();
+      } catch (_) {}
+      _user = _supabaseService.currentUser;
+      await _loadProfile();
+      notifyListeners();
+    }
+  }
+
   Future<void> cancelMfa() async {
     _mfaRequired = false;
     _mfaFactorId = null;
@@ -277,6 +295,7 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      RealtimeAlertsService().stop();
       await PushNotificationService().removeToken();
       await _supabaseService.signOut();
       _user = null;

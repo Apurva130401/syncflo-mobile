@@ -7,6 +7,7 @@ import '../screens/home_screen.dart';
 import '../navigation/root_navigation.dart';
 import '../screens/inbox/conversation_list.dart';
 import '../screens/analytics/analytics_screen.dart';
+import '../screens/calls/calls_screen.dart';
 import '../screens/ctwa/ctwa_screen.dart';
 import '../screens/agents/agents_screen.dart';
 import '../screens/team/team_screen.dart';
@@ -114,6 +115,13 @@ class NavigationDrawerWidget extends StatelessWidget {
                 ),
                 _buildMenuItem(
                   context: context,
+                  icon: LucideIcons.phone_call,
+                  label: 'AI Calls',
+                  route: '/calls',
+                  destination: const CallsScreen(),
+                ),
+                _buildMenuItem(
+                  context: context,
                   icon: LucideIcons.book_user,
                   label: 'Contacts',
                   route: '/contacts',
@@ -150,7 +158,7 @@ class NavigationDrawerWidget extends StatelessWidget {
                 _buildMenuItem(
                   context: context,
                   icon: LucideIcons.bell,
-                  label: 'Logs',
+                  label: 'Notifications',
                   route: '/notifications',
                   destination: const NotificationsCenterScreen(),
                 ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:intl/intl.dart';
+import '../../core/in_app_notification_service.dart';
 import '../../core/supabase_service.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
@@ -18,10 +19,43 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
   List<AppNotification> _notifications = [];
   String? _error;
 
+  final InAppNotificationService _inApp = InAppNotificationService();
+
   @override
   void initState() {
     super.initState();
     _loadNotifications();
+    // The realtime listener bumps this when a new notification arrives: reload the list.
+    _inApp.unreadCount.addListener(_onUnreadChanged);
+  }
+
+  @override
+  void dispose() {
+    _inApp.unreadCount.removeListener(_onUnreadChanged);
+    super.dispose();
+  }
+
+  int _lastUnread = -1;
+  void _onUnreadChanged() {
+    final now = _inApp.unreadCount.value;
+    final increased = _lastUnread >= 0 && now > _lastUnread;
+    _lastUnread = now;
+    if (increased && mounted) _refreshQuietly();
+  }
+
+  Future<void> _refreshQuietly() async {
+    try {
+      final list = await _supabaseService.getNotifications();
+      if (mounted) setState(() => _notifications = list);
+    } catch (_) {}
+  }
+
+  Future<void> _markAllRead() async {
+    try {
+      await _supabaseService.markAllNotificationsRead();
+      await _loadNotifications();
+      _inApp.refreshUnreadCount();
+    } catch (_) {}
   }
 
   Future<void> _loadNotifications() async {
@@ -45,10 +79,14 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
   }
 
   Future<void> _markRead(AppNotification notification) async {
+    // Open whatever the notification points to (works for read ones too).
+    _inApp.openNotificationTarget(notification);
     if (notification.read) return;
-    
+
     try {
       await _supabaseService.markNotificationRead(notification.id);
+      _inApp.refreshUnreadCount();
+      if (!mounted) return;
       setState(() {
         final index = _notifications.indexWhere((element) => element.id == notification.id);
         if (index != -1) {
@@ -72,7 +110,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Logs'),
+        title: const Text('Notifications'),
         leading: Builder(
           builder: (context) => IconButton(
             icon: Icon(LucideIcons.menu),
@@ -80,6 +118,11 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Mark all as read',
+            icon: Icon(LucideIcons.check_check),
+            onPressed: _markAllRead,
+          ),
           IconButton(
             icon: Icon(LucideIcons.refresh_cw),
             onPressed: _loadNotifications,

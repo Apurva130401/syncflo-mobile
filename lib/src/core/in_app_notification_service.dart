@@ -5,15 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/models.dart';
 import '../widgets/in_app_notification_banner.dart';
 import '../widgets/in_app_notification_modal.dart';
-import '../screens/home_screen.dart';
-import '../screens/inbox/conversation_list.dart';
-import '../screens/analytics/analytics_screen.dart';
-import '../screens/agents/agents_screen.dart';
-import '../screens/team/team_screen.dart';
-import '../screens/notifications/notifications_center_screen.dart';
-import '../screens/billing/billing_screen.dart';
-import '../screens/settings/settings_screen.dart';
-import '../screens/support/support_screen.dart';
+import 'app_router.dart';
 import 'supabase_service.dart';
 
 class InAppNotificationService {
@@ -25,8 +17,15 @@ class InAppNotificationService {
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
   RealtimeChannel? _channel;
+  StreamSubscription<AuthState>? _authSub;
   bool _isListening = false;
   OverlayEntry? _currentOverlayEntry;
+
+  /// Notification ids already shown, so a realtime redelivery (reconnect) doesn't show them twice.
+  final Set<String> _shownIds = {};
+
+  /// Unread notification count for badges (updated live).
+  final ValueNotifier<int> unreadCount = ValueNotifier<int>(0);
 
   /// Starts listening to real-time notification inserts in Supabase.
   /// Should be called after the user has successfully signed in.
@@ -38,20 +37,25 @@ class InAppNotificationService {
     if (user == null) return;
 
     _isListening = true;
-    debugPrint('[InAppNotif] Initializing real-time listener for user: ${user.id}');
+    debugPrint('[InAppNotif] Initializing real-time listener');
 
-    // Subscribe to INSERT events on the notifications table
+    // Only this user's notifications.
     _channel = client
         .channel('public:notifications:in_app')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'notifications',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: user.id,
+          ),
           callback: (payload) {
-            final record = payload.newRecord;
             try {
-              final notification = AppNotification.fromJson(record);
-              showNotification(notification);
+              final notification = AppNotification.fromJson(payload.newRecord);
+              unreadCount.value = unreadCount.value + 1;
+              if (_shownIds.add(notification.id)) showNotification(notification);
             } catch (e) {
               debugPrint('[InAppNotif] Error parsing notification record: $e');
             }
@@ -59,15 +63,31 @@ class InAppNotificationService {
         )
         .subscribe();
 
+    refreshUnreadCount();
     // Fetch and check for any missed unread mobile modal notifications
     _checkMissedNotifications();
 
-    // Listen for auth changes to clean up listeners on logout
-    client.auth.onAuthStateChange.listen((data) {
-      if (data.session == null) {
-        dispose();
-      }
+    // Clean up on logout (one listener, cancelled in dispose — it used to leak one per login).
+    _authSub = client.auth.onAuthStateChange.listen((data) {
+      if (data.session == null) dispose();
     });
+  }
+
+  /// Recounts unread notifications for the badge.
+  Future<void> refreshUnreadCount() async {
+    final client = SupabaseService().client;
+    final user = client.auth.currentUser;
+    if (user == null) return;
+    try {
+      final rows = await client
+          .from('notifications')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('read', false);
+      unreadCount.value = (rows as List).length;
+    } catch (e) {
+      debugPrint('[InAppNotif] Unread count failed: $e');
+    }
   }
 
   /// Queries the database for the latest unread mobile-modal notification
@@ -90,7 +110,7 @@ class InAppNotificationService {
       if (response != null) {
         final notification = AppNotification.fromJson(response);
         final actionUrl = notification.actionUrl ?? '';
-        if (actionUrl.startsWith('mobile_modal:')) {
+        if (actionUrl.startsWith('mobile_modal:') && _shownIds.add(notification.id)) {
           showNotification(notification);
         }
       }
@@ -166,39 +186,44 @@ class InAppNotificationService {
   /// Disposes of the active listener channel and clears overlays
   void dispose() {
     _removeOverlayEntry();
+    _authSub?.cancel();
+    _authSub = null;
     if (_channel != null) {
       SupabaseService().client.removeChannel(_channel!);
       _channel = null;
     }
+    _shownIds.clear();
+    unreadCount.value = 0;
     _isListening = false;
     debugPrint('[InAppNotif] Listener and overlays disposed');
   }
 
   /// Marks the notification as read in Supabase
   void _handleNotificationDismiss(AppNotification notification) {
-    SupabaseService().markNotificationRead(notification.id);
+    SupabaseService().markNotificationRead(notification.id).then((_) => refreshUnreadCount());
   }
 
   /// Handles routing or deep linking action when notification banner/modal is tapped
   void _handleNotificationAction(AppNotification notification) async {
     // Mark as read in Supabase
     _handleNotificationDismiss(notification);
+    await openNotificationTarget(notification);
+  }
 
+  /// Opens the screen or link a notification points to. Also used by the notifications list.
+  Future<void> openNotificationTarget(AppNotification notification) async {
     if (notification.actionUrl == null || notification.actionUrl!.isEmpty) return;
-
-    final context = navigatorKey.currentContext;
-    if (context == null) return;
+    if (navigatorKey.currentContext == null) return;
 
     var url = notification.actionUrl!;
     debugPrint('[InAppNotif] Handling notification action route: $url');
-    
+
     // Strip mobile routing prefixes if present
-    if (url.startsWith('mobile_modal:')) {
-      url = url.substring('mobile_modal:'.length);
-    } else if (url.startsWith('mobile_banner:')) {
-      url = url.substring('mobile_banner:'.length);
-    } else if (url.startsWith('mobile:')) {
-      url = url.substring('mobile:'.length);
+    for (final prefix in const ['mobile_modal:', 'mobile_banner:', 'mobile:']) {
+      if (url.startsWith(prefix)) {
+        url = url.substring(prefix.length);
+        break;
+      }
     }
 
     // Handle external website URL redirection
@@ -212,32 +237,9 @@ class InAppNotificationService {
       return;
     }
 
-    // Handle internal screen routing
-    Widget? destination;
-    if (url == '/notifications') {
-      destination = const NotificationsCenterScreen();
-    } else if (url == '/inbox') {
-      destination = const ConversationListScreen();
-    } else if (url == '/analytics') {
-      destination = const AnalyticsScreen();
-    } else if (url == '/agents') {
-      destination = const AgentsScreen();
-    } else if (url == '/team') {
-      destination = const TeamScreen();
-    } else if (url == '/billing') {
-      destination = const BillingScreen();
-    } else if (url == '/settings') {
-      destination = const SettingsScreen();
-    } else if (url == '/support') {
-      destination = const SupportScreen();
-    } else if (url == '/overview') {
-      destination = const HomeScreen();
-    }
-
-    if (destination != null) {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => destination!),
-      );
+    // Internal screens, including dashboard web paths such as /dashboard/billing.
+    if (!AppRouter.openRoute(url)) {
+      debugPrint('[InAppNotif] No mobile screen for route: $url');
     }
   }
 }
