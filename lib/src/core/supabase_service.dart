@@ -545,6 +545,34 @@ class SupabaseService {
     return models.UserUsage.fromJson(response);
   }
 
+  /// Reply time, automation and conversion rates: the same figures the web Overview shows.
+  Future<models.OverviewStats> getOverviewStats() async {
+    final response = await http
+        .get(Uri.parse('${Constants.apiUrl}/analytics/overview'), headers: _apiHeaders())
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw Exception('Could not load overview (${response.statusCode})');
+    }
+    return models.OverviewStats.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Plan, payments and saved payment methods: the same summary the web Billing page uses.
+  Future<models.BillingSummary> getBillingSummary() async {
+    final response = await http.get(
+      Uri.parse('${Constants.apiUrl}/billing/summary'),
+      headers: _apiHeaders(),
+    );
+    if (response.statusCode != 200) {
+      String message = 'Could not load billing (${response.statusCode})';
+      try {
+        final body = jsonDecode(response.body);
+        if (body is Map && body['error'] != null) message = body['error'].toString();
+      } catch (_) {}
+      throw Exception(message);
+    }
+    return models.BillingSummary.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   // Passkeys Management
   Future<List<Map<String, dynamic>>> listPasskeys() async {
     try {

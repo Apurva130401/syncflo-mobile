@@ -70,16 +70,21 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
 
   bool _isClosed(Conversation c) => c.status == 'closed' || c.status == 'archived';
 
-  List<Conversation> _getFilteredConversations() {
-    var result = _conversations;
-
-    if (_filter == 'closed') {
-      result = result.where(_isClosed).toList();
-    } else if (_filter == 'ai') {
-      result = result.where((c) => c.status != 'escalated' && !_isClosed(c)).toList();
-    } else if (_filter == 'human') {
-      result = result.where((c) => c.status == 'escalated').toList();
+  bool _matches(Conversation c, String filter) {
+    switch (filter) {
+      case 'closed':
+        return _isClosed(c);
+      case 'ai':
+        return c.status != 'escalated' && !_isClosed(c);
+      case 'human':
+        return c.status == 'escalated';
+      default:
+        return true;
     }
+  }
+
+  List<Conversation> _getFilteredConversations() {
+    var result = _conversations.where((c) => _matches(c, _filter)).toList();
 
     if (_unreadOnly) {
       result = result.where((c) => c.unreadCount > 0).toList();
@@ -106,30 +111,9 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
     return DateFormat('MMM d').format(t);
   }
 
-  Widget _buildFilterTab(String type, String label) {
-    final isActive = _filter == type;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _filter = type),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: isActive ? AppColors.surfaceLight : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: isActive ? AppColors.primary : AppColors.textMuted,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -137,7 +121,7 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Live Inbox'),
+        title: const Text('Inbox'),
         leading: Builder(
           builder: (context) => IconButton(
             icon: Icon(LucideIcons.menu),
@@ -152,233 +136,243 @@ class _ConversationListScreenState extends State<ConversationListScreen> {
         ],
       ),
       drawer: const NavigationDrawerWidget(currentRoute: '/inbox'),
-      body: Column(
-        children: [
-          // Search & Unread Toggle Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: AppColors.surface,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.surfaceLight,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      style: TextStyle(color: AppColors.text, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: 'Search name or phone...',
-                        prefixIcon: Icon(LucideIcons.search, color: AppColors.textMuted, size: 18),
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      onChanged: (value) => setState(() => _searchQuery = value),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: () => setState(() => _unreadOnly = !_unreadOnly),
-                  child: Container(
-                    height: 40,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: _unreadOnly ? AppColors.primary : AppColors.surfaceLight,
-                      border: Border.all(color: AppColors.border),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          LucideIcons.mail,
-                          size: 16,
-                          color: _unreadOnly ? AppColors.background : AppColors.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Unread',
-                          style: TextStyle(
-                            color: _unreadOnly ? AppColors.background : AppColors.primary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Filters Tab Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: AppColors.surface,
-            child: Row(
-              children: [
-                _buildFilterTab('all', 'All'),
-                _buildFilterTab('ai', 'AI'),
-                _buildFilterTab('human', 'Human'),
-                _buildFilterTab('closed', 'Closed'),
-              ],
-            ),
-          ),
-
-          const Divider(),
-
-          // Conversation List
-          Expanded(
-            child: _isLoading && _conversations.isEmpty
-                ? Center(child: CircularProgressIndicator(color: AppColors.primary))
-                : RefreshIndicator(
-                    onRefresh: _loadData,
-                    color: AppColors.primary,
-                    child: displayList.isEmpty
-                        ? ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            children: [
-                              SizedBox(height: MediaQuery.of(context).size.height * 0.2),
-                              Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(LucideIcons.message_square, size: 48, color: AppColors.textMuted),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'No conversations found',
-                                    style: TextStyle(color: AppColors.text, fontSize: 16, fontWeight: FontWeight.bold),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                                    child: Text(
-                                      _unreadOnly
-                                          ? 'No unread messages found matching your filters.'
-                                          : _searchQuery.isNotEmpty
-                                              ? 'No conversations match your search query.'
-                                              : 'Your inbox is clear!',
-                                      style: TextStyle(color: AppColors.textMuted, fontSize: 14),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                ],
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildSearchRow(),
+              _buildTabs(),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _isLoading && _conversations.isEmpty
+                    ? Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    : RefreshIndicator(
+                        onRefresh: _loadData,
+                        color: AppColors.primary,
+                        child: displayList.isEmpty
+                            ? _buildEmpty()
+                            : ListView.builder(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                itemCount: displayList.length,
+                                itemBuilder: (context, index) => _buildRow(displayList[index]),
                               ),
-                            ],
-                          )
-                        : ListView.separated(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            itemCount: displayList.length,
-                            separatorBuilder: (context, index) => const Divider(),
-                            itemBuilder: (context, index) => _buildTile(displayList[index]),
-                          ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A flat search field and an "Unread" toggle. No borders, no icon on the toggle.
+  Widget _buildSearchRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              height: 48,
+              color: AppColors.surfaceLight,
+              child: TextField(
+                controller: _searchController,
+                style: TextStyle(color: AppColors.text, fontSize: 16),
+                decoration: InputDecoration(
+                  hintText: 'Search name or phone',
+                  hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 16),
+                  prefixIcon: Icon(LucideIcons.search, color: AppColors.textMuted, size: 18),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                onChanged: (value) => setState(() => _searchQuery = value),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Material(
+            color: _unreadOnly ? AppColors.primary : AppColors.surfaceLight,
+            child: InkWell(
+              onTap: () => setState(() => _unreadOnly = !_unreadOnly),
+              child: Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                alignment: Alignment.center,
+                child: Text(
+                  'Unread',
+                  style: TextStyle(
+                    color: _unreadOnly ? AppColors.textInverse : AppColors.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTile(Conversation c) {
-    Color statusColor;
-    String statusLabel;
-    if (_isClosed(c)) {
-      statusColor = AppColors.textMuted;
-      statusLabel = 'Closed';
-    } else if (c.status == 'escalated') {
-      statusColor = AppColors.primary;
-      statusLabel = 'Human';
-    } else {
-      statusColor = AppColors.success;
-      statusLabel = 'AI Mode';
-    }
+  /// Plain text tabs with counts. The chosen one sits on a flat tone step.
+  Widget _buildTabs() {
+    int count(String f) => _conversations.where((c) => _matches(c, f)).length;
+    final tabs = [
+      ('all', 'All'),
+      ('ai', 'AI'),
+      ('human', 'Human'),
+      ('closed', 'Closed'),
+    ];
 
-    final time = _timeLabel(c);
-
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: AppColors.surfaceLight,
-        foregroundColor: AppColors.primary,
-        child: Icon(LucideIcons.user),
-      ),
-      title: Row(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+      child: Row(
         children: [
-          Expanded(
-            child: Text(
-              c.contactName.isNotEmpty ? c.contactName : c.contactId,
-              style: TextStyle(
-                color: AppColors.text,
-                fontWeight: c.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
-                fontSize: 16,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.1),
-              border: Border.all(color: statusColor.withValues(alpha: 0.3)),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              statusLabel,
-              style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-      subtitle: Padding(
-        padding: const EdgeInsets.only(top: 4.0),
-        child: Text(
-          c.lastMessage != null && c.lastMessage!.isNotEmpty ? c.lastMessage! : 'No messages yet',
-          style: TextStyle(
-            color: c.unreadCount > 0 ? AppColors.text : AppColors.textMuted,
-            fontSize: 14,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (time.isNotEmpty)
-            Text(time, style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
-          if (c.unreadCount > 0) ...[
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                shape: BoxShape.circle,
-              ),
-              child: Text(
-                '${c.unreadCount}',
-                style: TextStyle(
-                  color: AppColors.textInverse,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
+          for (final (type, label) in tabs)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Material(
+                color: _filter == type ? AppColors.surfaceLight : Colors.transparent,
+                child: InkWell(
+                  onTap: () => setState(() => _filter = type),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    child: Text(
+                      '$label ${count(type)}',
+                      style: TextStyle(
+                        color: _filter == type ? AppColors.text : AppColors.textSecondary,
+                        fontSize: 16,
+                        fontWeight: _filter == type ? FontWeight.w800 : FontWeight.w500,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    final title = _unreadOnly
+        ? 'Nothing unread'
+        : _searchQuery.isNotEmpty
+            ? 'No match'
+            : _filter == 'human'
+                ? 'No chat needs a human'
+                : _filter == 'closed'
+                    ? 'No closed chats'
+                    : 'Your inbox is clear';
+    final body = _unreadOnly
+        ? 'Every message in this view has been read.'
+        : _searchQuery.isNotEmpty
+            ? 'No conversation matches “$_searchQuery”.'
+            : 'New customer messages show up here the moment they arrive.';
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
+      children: [
+        Text(
+          title,
+          style: TextStyle(color: AppColors.text, fontSize: 30, fontWeight: FontWeight.w800, height: 1.1, letterSpacing: -0.8),
+        ),
+        const SizedBox(height: 12),
+        Text(body, style: TextStyle(color: AppColors.textSecondary, fontSize: 17, height: 1.45)),
+      ],
+    );
+  }
+
+  /// One conversation: name, what was said, when. No avatar, no badge, no divider line.
+  Widget _buildRow(Conversation c) {
+    final unread = c.unreadCount > 0;
+    final closed = _isClosed(c);
+    final human = c.status == 'escalated';
+    final time = _timeLabel(c);
+    final name = c.contactName.isNotEmpty ? c.contactName : c.contactId;
+    final preview = c.lastMessage != null && c.lastMessage!.isNotEmpty ? c.lastMessage! : 'No messages yet';
+
+    return InkWell(
       onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => ChatThreadScreen(conversation: c)),
         ); // The realtime subscription keeps the list current when coming back.
       },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: closed ? AppColors.textSecondary : AppColors.text,
+                      fontSize: 19,
+                      fontWeight: unread ? FontWeight.w800 : FontWeight.w600,
+                    ),
+                  ),
+                  if (human || closed) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      human ? 'With a human' : 'Closed',
+                      style: TextStyle(
+                        color: human ? AppColors.primary : AppColors.textMuted,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  Text(
+                    preview,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: unread ? AppColors.text : AppColors.textSecondary,
+                      fontSize: 16,
+                      height: 1.35,
+                      fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (time.isNotEmpty)
+                  Text(time, style: TextStyle(color: AppColors.textSecondary, fontSize: 15)),
+                if (unread) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    constraints: const BoxConstraints(minWidth: 26),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    color: AppColors.primary,
+                    alignment: Alignment.center,
+                    child: Text(
+                      '${c.unreadCount}',
+                      style: TextStyle(color: AppColors.textInverse, fontSize: 14, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
